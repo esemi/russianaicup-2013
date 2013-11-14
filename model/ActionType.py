@@ -1,0 +1,11 @@
+class ActionType:
+    END_TURN = 0
+    MOVE = 1
+    SHOOT = 2
+    RAISE_STANCE = 3
+    LOWER_STANCE = 4
+    THROW_GRENADE = 5
+    USE_MEDIKIT = 6
+    EAT_FIELD_RATION = 7
+    HEAL = 8
+    REQUEST_ENEMY_DISPOSITION = 9
