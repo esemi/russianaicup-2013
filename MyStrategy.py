@@ -3,6 +3,7 @@
 
 
 import logging
+from scipy.stats.distributions import anglit_gen
 
 from model.TrooperType import TrooperType
 from math import *
@@ -35,13 +36,13 @@ class MyStrategy:
         # на первом ходу никто не двигается, для вычисления реперных точек
         if self.way_points is None:
             log_it('first turn - init waypoints')
-            self._compute_waypoints(world, me)
+            self._compute_waypoints(world)
             return
 
-        method = self._select_action_by_type(me.type)
+        method = self.select_action_by_type(me.type)
         log_it('select %s action method' % method)
 
-        self._action_base(me, world, game, move)
+        self._action_shared(me, world, game, move) # общий ход
         getattr(self, method)(me, world, game, move)
 
     @property
@@ -60,78 +61,8 @@ class MyStrategy:
     def way_points(self, value):
         self._way_points = value
 
-    def _compute_waypoints(self, world, me):
-
-        # вычисляем координаты точки базирования отряда (среднее значение координат)
-        current_x = [t.x for t in world.troopers if t.teammate]
-        current_y = [t.y for t in world.troopers if t.teammate]
-        current_coord = (sum(current_x) / len(current_x), sum(current_y) / len(current_y))
-        log_it("compute current command coord %s" % str(current_coord))
-
-        center_coord = (round(world.width / 2), round(world.height / 2))
-
-        waypoints = [
-            (0, 0),
-            (0, world.height),
-            (world.width, world.height),
-            (world.width, 0),
-        ]
-
-        sorted_waypoints = []
-        for k in xrange(len(waypoints)):
-            point_for_sort = waypoints[k:]
-            if k == 0:
-                tmp = sorted(point_for_sort, key=lambda i: distance_from_to(current_coord, i))
-            else:
-                tmp = sorted(point_for_sort, key=lambda i: distance_from_to(sorted_waypoints[k-1], i))
-
-            log_it('TEST %d %s %s' % (k, str(tmp), str(point_for_sort)))
-            sorted_waypoints.append(tmp[0])
-
-        print sorted_waypoints
-
-        sorted_waypoints.append(center_coord)
-        self.way_points = sorted_waypoints
-        log_it('select %s waypoints' % str(sorted_waypoints))
-
-    def _action_commander(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Проверяет, нет ли в радиусе досягаемости отряда целей.
-        Если нет - встаёт и идёт дальше по направлению.
-        Если есть - пытается достичь позиции для атаки и пробует присесть и мочить.
-        """
-        pass
-
-    def _action_medic(self, me, world, game, move):
-        """
-        Держится сзади.
-        Лечит и ходит/мочит как командир.
-        """
-        pass
-
-    def _action_soldier(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Ходит мочит как командир.
-        """
-        pass
-
-    def _action_sniper(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Ходит мочит как командир.
-        """
-        pass
-
-    def _action_scout(self, me, world, game, move):
-        """
-        Держится впереди.
-        Ходит мочит как командир.
-        """
-        pass
-
-    def _select_action_by_type(self, type_):
+    @staticmethod
+    def select_action_by_type(type_):
         if type_ == TrooperType.COMMANDER:
             return '_action_commander'
         elif type_ == TrooperType.FIELD_MEDIC:
@@ -145,7 +76,40 @@ class MyStrategy:
         else:
             raise ValueError("Unsupported unit type: %s." % type_)
 
-    def _action_base(self, me, world, game, move):
+    def _compute_waypoints(self, world):
+        """
+        Вычисляем waypoint-ы - сперва все углы прямоугольной карты а в конец добавляем координаты центра
+
+        """
+
+        # вычисляем координаты точки базирования отряда (среднее значение координат)
+        current_x = [t.x for t in world.troopers if t.teammate]
+        current_y = [t.y for t in world.troopers if t.teammate]
+        current_coord = (sum(current_x) / len(current_x), sum(current_y) / len(current_y))
+        log_it("compute current command coord %s" % str(current_coord))
+
+        center_coord = (round(world.width / 2), round(world.height / 2))
+
+        angles = [
+            (0, 0),
+            (0, world.height),
+            (world.width, world.height),
+            (world.width, 0),
+        ]
+
+        sorted_waypoints = []
+        for k in xrange(len(angles)):
+            if k == 0:
+                angles = sorted(angles, key=lambda i: distance_from_to(current_coord, i))
+            else:
+                angles = sorted(angles, key=lambda i: distance_from_to(sorted_waypoints[k-1], i))
+            sorted_waypoints.append(angles.pop(0))
+
+        sorted_waypoints.append(center_coord)
+        self.way_points = sorted_waypoints
+        log_it('select %s waypoints' % str(sorted_waypoints))
+
+    def _change_current_waypoint(self, me):
         """
         Если юнит достиг видимости вейпоинта - выбирает следующий вейпоинт
         Если вейпоинт ещё не задан - берёт первый из списка
@@ -165,6 +129,55 @@ class MyStrategy:
                 self.dest_way_point_index += 1
 
         log_it("current dest waypoint is %s %s" % (str(self.dest_way_point_index), str(self.way_points)))
+
+    def _action_shared(self, me, world, game, move):
+        self._change_current_waypoint(me)
+
+    def _action_commander(self, me, world, game, move):
+        """
+        Держится со всеми.
+        Проверяет, нет ли в радиусе досягаемости отряда целей.
+        Если нет - встаёт и идёт дальше по направлению.
+        Если есть - пытается достичь позиции для атаки, пробует присесть и мочить.
+
+        """
+        pass
+
+    def _action_medic(self, me, world, game, move):
+        """
+        Держится со всеми.
+        Лечит и ходит/мочит как командир.
+
+        """
+        #todo release
+        pass
+
+    def _action_soldier(self, me, world, game, move):
+        """
+        Держится со всеми.
+        Ходит мочит как командир.
+
+        """
+
+        self._action_commander(me, world, game, move)
+
+    def _action_sniper(self, me, world, game, move):
+        """
+        Держится со всеми.
+        Ходит мочит как командир.
+
+        """
+
+        self._action_commander(me, world, game, move)
+
+    def _action_scout(self, me, world, game, move):
+        """
+        Держится со всеми.
+        Ходит мочит как командир.
+
+        """
+
+        self._action_commander(me, world, game, move)
 
 
 if __name__ == '__main__':
