@@ -3,10 +3,13 @@
 
 
 import logging
-from scipy.stats.distributions import anglit_gen
 
 from model.TrooperType import TrooperType
 from math import *
+
+
+# коэф., на который домножается средний радиус стрельбы отряда при вычислении дальности юнита от точки базирования команды
+CF_range_from_team = 1.5
 
 
 def log_it(msg, level='info'):
@@ -29,21 +32,12 @@ class MyStrategy:
     def move(self, me, world, game, move):
         log_it('new move turn %d' % world.move_index)
 
-        if me.action_points < game.standing_move_cost:
-            log_it('end turn (%d/%d)' % (me.action_points, game.standing_move_cost))
-            return
-
         # на первом ходу никто не двигается, для вычисления реперных точек
         if self.way_points is None:
             log_it('first turn - init waypoints')
             self._compute_waypoints(world)
-            return
-
-        method = self.select_action_by_type(me.type)
-        log_it('select %s action method' % method)
-
-        self._action_shared(me, world, game, move) # общий ход
-        getattr(self, method)(me, world, game, move)
+        else:
+            self._action_base(me, world, game, move)
 
     @property
     def dest_way_point_index(self):
@@ -76,16 +70,34 @@ class MyStrategy:
         else:
             raise ValueError("Unsupported unit type: %s." % type_)
 
+    @staticmethod
+    def team_avg_coord(world):
+        """
+        Вычисляем координаты точки базирования отряда (среднее значение координат)
+
+        """
+
+        current_x = [t.x for t in world.troopers if t.teammate]
+        current_y = [t.y for t in world.troopers if t.teammate]
+        return round(sum(current_x) / len(current_x)), round(sum(current_y) / len(current_y))
+
+    @staticmethod
+    def team_avg_shooting_range(world):
+        """
+        Вычисляем среднюю дальность стрельбы отряда
+
+        """
+
+        ranges = [t.shooting_range for t in world.troopers if t.teammate]
+        return sum(ranges) / len(ranges)
+
     def _compute_waypoints(self, world):
         """
         Вычисляем waypoint-ы - сперва все углы прямоугольной карты а в конец добавляем координаты центра
 
         """
 
-        # вычисляем координаты точки базирования отряда (среднее значение координат)
-        current_x = [t.x for t in world.troopers if t.teammate]
-        current_y = [t.y for t in world.troopers if t.teammate]
-        current_coord = (sum(current_x) / len(current_x), sum(current_y) / len(current_y))
+        current_coord = self.team_avg_coord(world)
         log_it("compute current command coord %s" % str(current_coord))
 
         center_coord = (round(world.width / 2), round(world.height / 2))
@@ -116,8 +128,7 @@ class MyStrategy:
         Если достигнут последний вейпоинт - удерживаем позицию (каждый солдат сам решает как лучше удерживать)
         """
 
-        log_it('action base select waypoint')
-        log_it("current dest waypoint is %s %s" % (str(self.dest_way_point_index), str(self.way_points)))
+        log_it("current dest waypoint is %s" % str(self.dest_way_point_index))
 
         if self.dest_way_point_index is None:
             self.dest_way_point_index = 0
@@ -127,11 +138,40 @@ class MyStrategy:
 
             if distance_to_waypoint < me.vision_range and len(self.way_points) > self.dest_way_point_index:
                 self.dest_way_point_index += 1
+                log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
 
-        log_it("current dest waypoint is %s %s" % (str(self.dest_way_point_index), str(self.way_points)))
+    def max_range_from_team_exceeded(self, world, me):
+        """
+        Проверяем - не ушёл ли юнит на максимальную дальность от отряда:
+        слишком далеко = средняя дальность обстрела отряда * CF_range_from_team
 
-    def _action_shared(self, me, world, game, move):
+        """
+
+        team_coord = self.team_avg_coord(world)
+        shoot_range = self.team_avg_shooting_range(world)
+        return me.get_distance_to(*team_coord) > shoot_range * CF_range_from_team
+
+    @staticmethod
+    def find_path_from_to(world, coord_from, coord_to):
+        """
+        Ищем кратчайшиу путь из точки А в точку Б с обходом препятствий
+
+        :rtype : list of path coords
+        """
+        return []
+
+    def _action_base(self, me, world, game, move):
         self._change_current_waypoint(me)
+
+        # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
+        if self.max_range_from_team_exceeded(world, me):
+            log_it('max range from team coord exceed')
+            path = self.find_path_from_to(world, me, self.team_avg_coord(world))
+            log_it('path for return to team %s' % str(path))
+        else:
+            method = self.select_action_by_type(me.type)
+            log_it('select %s action method' % method)
+            getattr(self, method)(me, world, game, move)
 
     def _action_commander(self, me, world, game, move):
         """
@@ -150,7 +190,7 @@ class MyStrategy:
 
         """
         #todo release
-        pass
+        self._action_commander(me, world, game, move)
 
     def _action_soldier(self, me, world, game, move):
         """
