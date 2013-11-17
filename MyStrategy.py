@@ -78,7 +78,6 @@ class MyStrategy:
 
     def move(self, me, world, game, move):
         log_it('new move turn %d' % world.move_index)
-        self.find_path_from_to(world, (29, 18), (0, 0), True)
 
         # на первом ходу никто не двигается, для вычисления реперных точек
         if self.way_points is None:
@@ -148,13 +147,13 @@ class MyStrategy:
         current_coord = self.team_avg_coord(world)
         log_it("compute current command coord %s" % str(current_coord))
 
-        center_coord = (round(world.width / 2), round(world.height / 2))
+        center_coord = (int(world.width / 2), int(world.height / 2))
 
         angles = [
             (0, 0),
-            (0, world.height),
-            (world.width, world.height),
-            (world.width, 0),
+            (0, world.height - 1),
+            (world.width - 1, world.height - 1),
+            (world.width - 1, 0),
             ]
 
         sorted_waypoints = []
@@ -180,13 +179,13 @@ class MyStrategy:
 
         if self.dest_way_point_index is None:
             self.dest_way_point_index = 0
-        else:
-            distance_to_waypoint = me.get_distance_to(*self.way_points[self.dest_way_point_index])
-            log_it('distance to waypoint %s (range %s)' % (distance_to_waypoint, me.vision_range))
 
-            if distance_to_waypoint < me.vision_range and len(self.way_points) > self.dest_way_point_index:
-                self.dest_way_point_index += 1
-                log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
+        distance_to_waypoint = me.get_distance_to(*self.way_points[self.dest_way_point_index])
+        log_it('distance to waypoint %s (range %s)' % (distance_to_waypoint, me.vision_range))
+
+        if distance_to_waypoint < me.vision_range and len(self.way_points) > self.dest_way_point_index:
+            self.dest_way_point_index += 1
+            log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
 
     def max_range_from_team_exceeded(self, world, me):
         """
@@ -210,7 +209,7 @@ class MyStrategy:
         """
 
         if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
-                        coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
+            coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
 
@@ -240,8 +239,9 @@ class MyStrategy:
                         item['wave_num'] = last_wave_num
 
             # будем надеяться, что конечная точка не окажется в замкнутой области, ибо тогда цикл будет бесконечен)
-            if len(filter_free_wave(map_passability, val=None)) == 0 or \
-                            map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None or map_passability == tmp:
+            if (len(filter_free_wave(map_passability, val=None)) == 0) or \
+                (map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None) or \
+                (map_passability == tmp):
                 break
 
         if map_passability[coord_to[0]][coord_to[1]]['wave_num'] is None:
@@ -264,7 +264,7 @@ class MyStrategy:
                 break
 
         path.reverse()
-        return path
+        return [i['coord'] for  i in path]
 
     @staticmethod
     def _stend_up(move, me, game):
@@ -299,7 +299,7 @@ class MyStrategy:
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
         if self.max_range_from_team_exceeded(world, me):
             log_it('max range from team coord exceed')
-            path = self.find_path_from_to(world, me, self.team_avg_coord(world), True)
+            path = self.find_path_from_to(world, (me.x, me.y), self.team_avg_coord(world), True)
             log_it('path for return to team %s' % str(path))
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
@@ -319,8 +319,9 @@ class MyStrategy:
         Если есть - пытается достичь позиции для атаки, пробует присесть и мочить.
 
         """
-        path = self.find_path_from_to(world, me, self.team_avg_coord(world), True)
-        log_it('path for return to team %s' % str(path))
+        coord = self.way_points[self.dest_way_point_index]
+        path = self.find_path_from_to(world, (me.x, me.y), coord, True)
+        log_it('path for going to waypoint %s %s' % (str(coord), str(path)))
         if len(path) > 0:
             if me.stance != TrooperStance.STANDING:
                 self._stend_up(move, me, game)
