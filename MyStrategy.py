@@ -4,8 +4,14 @@
 
 import logging
 
-from model.TrooperType import TrooperType
+import copy
 from math import *
+from random import shuffle
+
+from model.ActionType import ActionType
+from model.TrooperStance import TrooperStance
+from model.TrooperType import TrooperType
+from model.CellType import CellType
 
 
 # коэф., на который домножается средний радиус стрельбы отряда при вычислении дальности юнита от точки базирования команды
@@ -20,6 +26,47 @@ def distance_from_to(coord_from, coord_to):
     return hypot(coord_to[0] - coord_from[0], coord_to[1] - coord_from[1])
 
 
+def filter_free_wave(map_, val=None):
+    if val is None:
+        func = lambda x: (x['wave_num'] is None)
+    else:
+        func = lambda x: (x['wave_num'] == val)
+
+    waves = []
+    for row in map_:
+        waves += filter(func, row)
+
+    return filter(lambda x: x['passability'], waves)
+
+
+def find_cell_neighborhood(coord, map):
+    out = []
+
+    if coord[0] > 0:
+        try:
+            out.append(map[coord[0]-1][coord[1]])
+        except IndexError:
+            pass
+
+    try:
+        out.append(map[coord[0]+1][coord[1]])
+    except IndexError:
+        pass
+
+    if coord[1] > 0:
+        try:
+            out.append(map[coord[0]][coord[1]-1])
+        except IndexError:
+            pass
+
+    try:
+        out.append(map[coord[0]][coord[1]+1])
+    except IndexError:
+        pass
+
+    return filter(lambda x: x['passability'], out)
+
+
 class MyStrategy:
 
     def __init__(self):
@@ -31,6 +78,7 @@ class MyStrategy:
 
     def move(self, me, world, game, move):
         log_it('new move turn %d' % world.move_index)
+        self.find_path_from_to(world, (29, 18), (0, 0), True)
 
         # на первом ходу никто не двигается, для вычисления реперных точек
         if self.way_points is None:
@@ -107,7 +155,7 @@ class MyStrategy:
             (0, world.height),
             (world.width, world.height),
             (world.width, 0),
-        ]
+            ]
 
         sorted_waypoints = []
         for k in xrange(len(angles)):
@@ -152,13 +200,98 @@ class MyStrategy:
         return me.get_distance_to(*team_coord) > shoot_range * CF_range_from_team
 
     @staticmethod
-    def find_path_from_to(world, coord_from, coord_to):
+    def find_path_from_to(world, coord_from, coord_to, use_troopers):
         """
-        Ищем кратчайшиу путь из точки А в точку Б с обходом препятствий
+        Ищем кратчайший путь из точки А в точку Б с обходом препятствий и других юнитов
+        Если одна из точек непроходима или выходит за пределы поля - отдаём пустой список
+        Если в точку финиша ну никак не придти - отдаём пустой список
 
-        :rtype : list of path coords
+        :rtype : list of simplest path coords
         """
-        return []
+
+        if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
+                        coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
+            log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
+            return []
+
+        # карта проходимости юнитов
+        map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
+                            for y, v in enumerate(row)] for x, row in enumerate(world.cells)]
+
+        # отмечаем юнитов на карте как непроходимые препятствия
+        if use_troopers:
+            for t in world.troopers:
+                map_passability[t.x][t.y]['passability'] = False
+
+        # Алгоритм Ли для поиска пути из coord_from в coord_to
+        map_passability[coord_from[0]][coord_from[1]]['wave_num'] = 0
+        map_passability[coord_from[0]][coord_from[1]]['passability'] = True
+        last_wave_num = 0
+
+        # обходим волнами все ячейки, ещё не задетые другими волнами
+        while True:
+            wave_cells = filter_free_wave(map_passability, val=last_wave_num)
+            tmp = copy.deepcopy(map_passability)
+            last_wave_num += 1
+            for cell in wave_cells:
+                neighborhoods = find_cell_neighborhood(cell['coord'], map_passability)
+                for item in neighborhoods:
+                    if item['wave_num'] is None:
+                        item['wave_num'] = last_wave_num
+
+            # будем надеяться, что конечная точка не окажется в замкнутой области, ибо тогда цикл будет бесконечен)
+            if len(filter_free_wave(map_passability, val=None)) == 0 or \
+                            map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None or map_passability == tmp:
+                break
+
+        if map_passability[coord_to[0]][coord_to[1]]['wave_num'] is None:
+            return []  # todo приспосаблиываться к финишной точке, к которой не дойти
+
+        end_point = map_passability[coord_to[0]][coord_to[1]]
+
+        # восстанавливаем кратчайший путь до стартовой ячейки от выбранной конечной (может быть не финишная, а ближайшая к ней)
+        path = [end_point]
+        while True:
+            current_cell = path[-1]
+            neighborhoods = find_cell_neighborhood(current_cell['coord'], map_passability)
+            cells = filter(lambda x: (x['wave_num'] == current_cell['wave_num'] - 1), neighborhoods)
+            shuffle(cells)
+
+            new_cell = cells.pop()
+            if new_cell['wave_num'] > 0:
+                path.append(new_cell)
+            else:
+                break
+
+        path.reverse()
+        return path
+
+    @staticmethod
+    def _stend_up(move, me, game):
+        log_it('start raise stance to %s')
+        if me.action_points < game.stance_change_cost:
+            log_it('not enouth AP')
+        else:
+            move.action = ActionType.RAISE_STANCE
+
+    @staticmethod
+    def _move_to(world, move, game, me, coord):
+        log_it('start move to %s' % str(coord))
+        if me.action_points < game.stance_change_cost:
+            log_it('not enouth AP')
+            return
+
+        try:
+            if world.cells[coord[0]][coord[1]] != CellType.FREE:
+                log_it('cell not free')
+                return
+        except IndexError:
+            log_it('cell not found')
+            return
+
+        move.action = ActionType.MOVE
+        move.x = coord[0]
+        move.y = coord[1]
 
     def _action_base(self, me, world, game, move):
         self._change_current_waypoint(me)
@@ -166,8 +299,13 @@ class MyStrategy:
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
         if self.max_range_from_team_exceeded(world, me):
             log_it('max range from team coord exceed')
-            path = self.find_path_from_to(world, me, self.team_avg_coord(world))
+            path = self.find_path_from_to(world, me, self.team_avg_coord(world), True)
             log_it('path for return to team %s' % str(path))
+            if len(path) > 0:
+                if me.stance != TrooperStance.STANDING:
+                    self._stend_up(move, me, game)
+                else:
+                    self._move_to(world, move, game, me, path[0])
         else:
             method = self.select_action_by_type(me.type)
             log_it('select %s action method' % method)
@@ -181,7 +319,13 @@ class MyStrategy:
         Если есть - пытается достичь позиции для атаки, пробует присесть и мочить.
 
         """
-        pass
+        path = self.find_path_from_to(world, me, self.team_avg_coord(world), True)
+        log_it('path for return to team %s' % str(path))
+        if len(path) > 0:
+            if me.stance != TrooperStance.STANDING:
+                self._stend_up(move, me, game)
+            else:
+                self._move_to(world, move, game, me, path[0])
 
     def _action_medic(self, me, world, game, move):
         """
