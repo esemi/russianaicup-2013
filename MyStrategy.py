@@ -8,6 +8,8 @@ import copy
 from math import *
 from random import shuffle
 
+import SharedVars as shared
+
 from model.ActionType import ActionType
 from model.TrooperStance import TrooperStance
 from model.TrooperType import TrooperType
@@ -15,7 +17,7 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.0
+CF_range_from_team = 1.1
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
 CF_range_from_waypoint = 0.5
@@ -73,8 +75,8 @@ def find_cell_neighborhood(coord, map_):
 class MyStrategy:
 
     def __init__(self):
-        self.way_points = None
         self.dest_way_point_index = None
+        self.current_path = None
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
             level=logging.INFO)
@@ -82,11 +84,15 @@ class MyStrategy:
     def move(self, me, world, game, move):
         log_it('new move turn %d unit %d (%s)' % (world.move_index, me.id, str((me.x, me.y))))
 
-        # на первом ходу никто не двигается, для вычисления реперных точек
-        if self.way_points is None:
+        #for i in xrange(100):
+        #    s = time()
+        #    self.find_path_from_to(world, (0, 0), (20, 10))
+        #    print time() - s
+
+        if shared.way_points is None:
             self._compute_waypoints(world)
-        else:
-            self._action_base(me, world, game, move)
+
+        self._action_base(me, world, game, move)
 
     @property
     def dest_way_point_index(self):
@@ -97,12 +103,12 @@ class MyStrategy:
         self._dest_way_point_index = value
 
     @property
-    def way_points(self):
-        return self._way_points
+    def current_path(self):
+        return self._current_path
 
-    @way_points.setter
-    def way_points(self, value):
-        self._way_points = value
+    @current_path.setter
+    def current_path(self, value):
+        self._current_path = value
 
     @staticmethod
     def select_action_by_type(type_):
@@ -159,7 +165,7 @@ class MyStrategy:
             sorted_waypoints.append(angles.pop(0))
 
         sorted_waypoints.append(center_coord)
-        self.way_points = sorted_waypoints
+        shared.way_points = sorted_waypoints
         log_it('select %s waypoints' % str(sorted_waypoints))
 
     def _change_current_waypoint(self, me):
@@ -174,9 +180,9 @@ class MyStrategy:
         if self.dest_way_point_index is None:
             self.dest_way_point_index = 0
 
-        distance_to_waypoint = me.get_distance_to(*self.way_points[self.dest_way_point_index])
+        distance_to_waypoint = me.get_distance_to(*shared.way_points[self.dest_way_point_index])
         if distance_to_waypoint < me.vision_range * CF_range_from_waypoint and \
-                        len(self.way_points) > self.dest_way_point_index:
+                        len(shared.way_points) > self.dest_way_point_index:
             self.dest_way_point_index += 1
             log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
 
@@ -229,8 +235,7 @@ class MyStrategy:
 
         return me.action_points >= me.shoot_cost and summary_damage >= enemy.hitpoints
 
-    @staticmethod
-    def find_path_from_to(world, coord_from, coord_to):
+    def find_path_from_to(self, world, coord_from, coord_to):
         """
         Ищем кратчайший путь из точки А в точку Б с обходом препятствий и других юнитов
         Если одна из точек непроходима или выходит за пределы поля - отдаём пустой список
@@ -238,6 +243,8 @@ class MyStrategy:
 
         :rtype : list of simplest path coords
         """
+
+        log_it('find path call start (%s to %s)' % (str(coord_from), str(coord_to)))
 
         if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
                         coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
@@ -254,7 +261,6 @@ class MyStrategy:
             try:
                 short_radius_neibs.index((t.x, t.y))
                 map_passability[t.x][t.y]['passability'] = False
-                log_it('%s check as unpassability' % str((t.x, t.y)))
             except ValueError:
                 pass
 
@@ -299,7 +305,10 @@ class MyStrategy:
                 break
 
         path.reverse()
-        return [i['coord'] for i in path]
+        out = [i['coord'] for i in path]
+
+        log_it('find path call end (%s)' % str(out))
+        return out
 
     @staticmethod
     def _stand_up(move, me, game):
@@ -388,7 +397,7 @@ class MyStrategy:
                 if len(path) > 0:
                     self._stand_up_or_move(world, move, game, me, path[0])
         else:
-            coord = self.way_points[self.dest_way_point_index]
+            coord = shared.way_points[self.dest_way_point_index]
             path = self.find_path_from_to(world, (me.x, me.y), coord)
             log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
             if len(path) > 0:
