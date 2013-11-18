@@ -14,8 +14,11 @@ from model.TrooperType import TrooperType
 from model.CellType import CellType
 
 
-# коэф., на который домножается средний радиус стрельбы отряда при вычислении дальности юнита от точки базирования команды
+# коэф. для вычисления максимальной дальности юнита от точки базирования команды
 CF_range_from_team = 1.0
+
+# коэф. для вычисления максимальной дальности юнита от точки базирования команды
+CF_range_from_waypoint = 0.5
 
 
 def log_it(msg, level='info'):
@@ -77,11 +80,10 @@ class MyStrategy:
             level=logging.INFO)
 
     def move(self, me, world, game, move):
-        log_it('new move turn %d' % world.move_index)
+        log_it('new move turn %d unit %d (%s)' % (world.move_index, me.id, str((me.x, me.y))))
 
         # на первом ходу никто не двигается, для вычисления реперных точек
         if self.way_points is None:
-            log_it('first turn - init waypoints')
             self._compute_waypoints(world)
         else:
             self._action_base(me, world, game, move)
@@ -104,18 +106,10 @@ class MyStrategy:
 
     @staticmethod
     def select_action_by_type(type_):
-        if type_ == TrooperType.COMMANDER:
-            return '_action_commander'
-        elif type_ == TrooperType.FIELD_MEDIC:
+        if type_ == TrooperType.FIELD_MEDIC:
             return '_action_medic'
-        elif type_ == TrooperType.SOLDIER:
-            return '_action_soldier'
-        elif type_ == TrooperType.SNIPER:
-            return '_action_sniper'
-        elif type_ == TrooperType.SCOUT:
-            return '_action_scout'
         else:
-            raise ValueError("Unsupported unit type: %s." % type_)
+            return '_action_commander'
 
     @staticmethod
     def team_avg_coord(world):
@@ -181,22 +175,23 @@ class MyStrategy:
             self.dest_way_point_index = 0
 
         distance_to_waypoint = me.get_distance_to(*self.way_points[self.dest_way_point_index])
-        log_it('distance to waypoint %s (range %s)' % (distance_to_waypoint, me.vision_range))
-
-        if distance_to_waypoint < me.vision_range and len(self.way_points) > self.dest_way_point_index:
+        if distance_to_waypoint < me.vision_range * CF_range_from_waypoint and \
+                        len(self.way_points) > self.dest_way_point_index:
             self.dest_way_point_index += 1
             log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
 
     def max_range_from_team_exceeded(self, world, me):
         """
-        Проверяем - не ушёл ли юнит на максимальную дальность от отряда:
-        слишком далеко = средняя дальность обстрела отряда * CF_range_from_team
+        Проверяем - не ушёл ли юнит слишком далеко от отряда:
 
         """
 
-        team_coord = self.team_avg_coord(world)
         shoot_range = self.team_avg_shooting_range(world)
-        return me.get_distance_to(*team_coord) > shoot_range * CF_range_from_team
+        ranges_to_team = [me.get_distance_to(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
+        if len(ranges_to_team) == 0:
+            return False
+        else:
+            return max(ranges_to_team) > shoot_range * CF_range_from_team
 
     def select_enemy(self, me, world):
         """
@@ -279,18 +274,17 @@ class MyStrategy:
                     if item['wave_num'] is None:
                         item['wave_num'] = last_wave_num
 
-            # будем надеяться, что конечная точка не окажется в замкнутой области, ибо тогда цикл будет бесконечен)
             if (len(filter_free_wave(map_passability, val=None)) == 0) or \
                     (map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None) or \
                     (map_passability == tmp):
                 break
 
         if map_passability[coord_to[0]][coord_to[1]]['wave_num'] is None:
-            return []  # todo приспосаблиываться к финишной точке, к которой не дойти
+            return []  # todo приспосабливаться к финишной точке, к которой не дойти
 
         end_point = map_passability[coord_to[0]][coord_to[1]]
 
-        # восстанавливаем кратчайший путь до стартовой ячейки от выбранной конечной (может быть не финишная, а ближайшая к ней)
+        # восстанавливаем кратчайший путь до стартовой ячейки
         path = [end_point]
         while True:
             current_cell = path[-1]
@@ -305,10 +299,10 @@ class MyStrategy:
                 break
 
         path.reverse()
-        return [i['coord'] for  i in path]
+        return [i['coord'] for i in path]
 
     @staticmethod
-    def _stend_up(move, me, game):
+    def _stand_up(move, me, game):
         log_it('start raise stance to %s')
         if me.action_points < game.stance_change_cost:
             log_it('not enouth AP')
@@ -334,17 +328,37 @@ class MyStrategy:
         move.x = coord[0]
         move.y = coord[1]
 
+    @staticmethod
+    def _shoot(move, me, enemy):
+        log_it('start shoot to %s' % str((enemy.x, enemy.y)))
+        if me.action_points < me.shoot_cost:
+            log_it('not enouth AP')
+        else:
+            move.action = ActionType.SHOOT
+            move.x = enemy.x
+            move.y = enemy.y
+
+    def _stand_up_or_move(self, world, move, game, me, coord):
+        if me.stance != TrooperStance.STANDING:
+            self._stand_up(move, me, game)
+        else:
+            self._move_to(world, move, game, me, coord)
+
     def _action_base(self, me, world, game, move):
         self._change_current_waypoint(me)
 
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
         if self.max_range_from_team_exceeded(world, me):
             log_it('max range from team coord exceed')
-            path = self.find_path_from_to(world, (me.x, me.y), self.team_avg_coord(world))
+
+            team_coords = [(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
+            coords_to = sorted(team_coords, key=lambda c: me.get_distance_to(*c))[0]
+
+            path = self.find_path_from_to(world, (me.x, me.y), coords_to)
             log_it('path for return to team %s' % str(path))
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
-                    self._stend_up(move, me, game)
+                    self._stand_up(move, me, game)
                 else:
                     self._move_to(world, move, game, me, path[0])
         else:
@@ -357,23 +371,28 @@ class MyStrategy:
         Держится со всеми.
         Проверяет, нет ли в радиусе досягаемости отряда целей.
         Если нет - встаёт и идёт дальше по направлению.
-        Если есть - пытается достичь позиции для атаки, пробует присесть и мочить.
+        Если есть - пытается достичь позиции для атаки
 
         """
 
         enemy = self.select_enemy(me, world)
         if enemy is not None:
-            log_it('find enemy for attack %s' % str(enemy))
-            # todo release
+            log_it('find enemy for attack %s' % str(enemy.id))
+
+            if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
+                self._shoot(move, me, enemy)
+            else:
+                path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
+                log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
+                                                                     str(path)))
+                if len(path) > 0:
+                    self._stand_up_or_move(world, move, game, me, path[0])
         else:
             coord = self.way_points[self.dest_way_point_index]
             path = self.find_path_from_to(world, (me.x, me.y), coord)
             log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
             if len(path) > 0:
-                if me.stance != TrooperStance.STANDING:
-                    self._stend_up(move, me, game)
-                else:
-                    self._move_to(world, move, game, me, path[0])
+                self._stand_up_or_move(world, move, game, me, path[0])
 
     def _action_medic(self, me, world, game, move):
         """
@@ -382,33 +401,6 @@ class MyStrategy:
 
         """
         #todo release
-        self._action_commander(me, world, game, move)
-
-    def _action_soldier(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Ходит мочит как командир.
-
-        """
-
-        self._action_commander(me, world, game, move)
-
-    def _action_sniper(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Ходит мочит как командир.
-
-        """
-
-        self._action_commander(me, world, game, move)
-
-    def _action_scout(self, me, world, game, move):
-        """
-        Держится со всеми.
-        Ходит мочит как командир.
-
-        """
-
         self._action_commander(me, world, game, move)
 
 
