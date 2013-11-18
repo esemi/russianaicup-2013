@@ -15,7 +15,7 @@ from model.CellType import CellType
 
 
 # коэф., на который домножается средний радиус стрельбы отряда при вычислении дальности юнита от точки базирования команды
-CF_range_from_team = 1.5
+CF_range_from_team = 1.0
 
 
 def log_it(msg, level='info'):
@@ -39,28 +39,28 @@ def filter_free_wave(map_, val=None):
     return filter(lambda x: x['passability'], waves)
 
 
-def find_cell_neighborhood(coord, map):
+def find_cell_neighborhood(coord, map_):
     out = []
 
     if coord[0] > 0:
         try:
-            out.append(map[coord[0]-1][coord[1]])
+            out.append(map_[coord[0]-1][coord[1]])
         except IndexError:
             pass
 
     try:
-        out.append(map[coord[0]+1][coord[1]])
+        out.append(map_[coord[0]+1][coord[1]])
     except IndexError:
         pass
 
     if coord[1] > 0:
         try:
-            out.append(map[coord[0]][coord[1]-1])
+            out.append(map_[coord[0]][coord[1]-1])
         except IndexError:
             pass
 
     try:
-        out.append(map[coord[0]][coord[1]+1])
+        out.append(map_[coord[0]][coord[1]+1])
     except IndexError:
         pass
 
@@ -126,7 +126,7 @@ class MyStrategy:
 
         current_x = [t.x for t in world.troopers if t.teammate]
         current_y = [t.y for t in world.troopers if t.teammate]
-        return round(sum(current_x) / len(current_x)), round(sum(current_y) / len(current_y))
+        return int(sum(current_x) / len(current_x)), int(sum(current_y) / len(current_y))
 
     @staticmethod
     def team_avg_shooting_range(world):
@@ -143,6 +143,7 @@ class MyStrategy:
         Вычисляем waypoint-ы - сперва все углы прямоугольной карты а в конец добавляем координаты центра
 
         """
+        # todo оставлять только досягаемые вейкпоинты
 
         current_coord = self.team_avg_coord(world)
         log_it("compute current command coord %s" % str(current_coord))
@@ -153,8 +154,7 @@ class MyStrategy:
             (0, 0),
             (0, world.height - 1),
             (world.width - 1, world.height - 1),
-            (world.width - 1, 0),
-            ]
+            (world.width - 1, 0)]
 
         sorted_waypoints = []
         for k in xrange(len(angles)):
@@ -198,8 +198,16 @@ class MyStrategy:
         shoot_range = self.team_avg_shooting_range(world)
         return me.get_distance_to(*team_coord) > shoot_range * CF_range_from_team
 
+    def get_enemy_into_team_range(self, world):
+        """
+        Ищем врагов в поле видимости команды
+
+        """
+
+        return [t for t in world.troopers if not t.teammate]
+
     @staticmethod
-    def find_path_from_to(world, coord_from, coord_to, use_troopers):
+    def find_path_from_to(world, coord_from, coord_to):
         """
         Ищем кратчайший путь из точки А в точку Б с обходом препятствий и других юнитов
         Если одна из точек непроходима или выходит за пределы поля - отдаём пустой список
@@ -209,7 +217,7 @@ class MyStrategy:
         """
 
         if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
-            coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
+                        coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
 
@@ -217,10 +225,15 @@ class MyStrategy:
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
                             for y, v in enumerate(row)] for x, row in enumerate(world.cells)]
 
-        # отмечаем юнитов на карте как непроходимые препятствия
-        if use_troopers:
-            for t in world.troopers:
+        # отмечаем юнитов в радиусе одного шага как непроходимые препятствия
+        short_radius_neibs = [x['coord'] for x in find_cell_neighborhood(coord_from, map_passability)]
+        for t in world.troopers:
+            try:
+                short_radius_neibs.index((t.x, t.y))
                 map_passability[t.x][t.y]['passability'] = False
+                log_it('%s check as unpassability' % str((t.x, t.y)))
+            except ValueError:
+                pass
 
         # Алгоритм Ли для поиска пути из coord_from в coord_to
         map_passability[coord_from[0]][coord_from[1]]['wave_num'] = 0
@@ -240,8 +253,8 @@ class MyStrategy:
 
             # будем надеяться, что конечная точка не окажется в замкнутой области, ибо тогда цикл будет бесконечен)
             if (len(filter_free_wave(map_passability, val=None)) == 0) or \
-                (map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None) or \
-                (map_passability == tmp):
+                    (map_passability[coord_to[0]][coord_to[1]]['wave_num'] is not None) or \
+                    (map_passability == tmp):
                 break
 
         if map_passability[coord_to[0]][coord_to[1]]['wave_num'] is None:
@@ -299,7 +312,7 @@ class MyStrategy:
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
         if self.max_range_from_team_exceeded(world, me):
             log_it('max range from team coord exceed')
-            path = self.find_path_from_to(world, (me.x, me.y), self.team_avg_coord(world), True)
+            path = self.find_path_from_to(world, (me.x, me.y), self.team_avg_coord(world))
             log_it('path for return to team %s' % str(path))
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
@@ -319,9 +332,16 @@ class MyStrategy:
         Если есть - пытается достичь позиции для атаки, пробует присесть и мочить.
 
         """
+
+        enemys = self.get_enemy_into_team_range(world)
+        log_it('find %d enemyes into team range' % len(enemys))
+
+        if len(enemys) > 0:
+            pass
+
         coord = self.way_points[self.dest_way_point_index]
-        path = self.find_path_from_to(world, (me.x, me.y), coord, True)
-        log_it('path for going to waypoint %s %s' % (str(coord), str(path)))
+        path = self.find_path_from_to(world, (me.x, me.y), coord)
+        log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
         if len(path) > 0:
             if me.stance != TrooperStance.STANDING:
                 self._stend_up(move, me, game)
