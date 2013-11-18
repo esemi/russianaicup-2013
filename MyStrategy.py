@@ -198,13 +198,41 @@ class MyStrategy:
         shoot_range = self.team_avg_shooting_range(world)
         return me.get_distance_to(*team_coord) > shoot_range * CF_range_from_team
 
-    def get_enemy_into_team_range(self, world):
+    def select_enemy(self, me, world):
         """
-        Ищем врагов в поле видимости команды
+        Выбираем врага в поле видимости команды
+        если в текущем поле досягаемости оружия есть враг и мы можем убить его за оставшиеся ходя - берём его
+        иначе ищем врагов в поле видимости команды
+            если враги есть - берём ближайшего из них
+            иначе - None
 
+        :rtype Trooper or None
         """
 
-        return [t for t in world.troopers if not t.teammate]
+        enemies = [t for t in world.troopers if not t.teammate]
+        if len(enemies) == 0:
+            return None
+
+        # проверяем, нет ли среди ближайших врагов такого, который можно было бы атаковать
+        visible_enemies = [e for e in enemies if world.is_visible(me.shooting_range, me.x, me.y, me.stance, e.x, e.y,
+                                                                  e.stance)]
+        sorted_visible_enemies = sorted(visible_enemies, key=lambda e: e.hitpoints)
+
+        # если в досягаемости есть враг, которого мы сможем убить за оставшиеся ходы - вернём его
+        if len(sorted_visible_enemies) > 0 and self.check_can_kill_unit(me, sorted_visible_enemies[0]):
+            return sorted_visible_enemies[0]
+
+        # берём врага, ближайшего к центру команды
+        team_coord = self.team_avg_coord(world)
+        nearest_enemies = sorted(enemies, key=lambda e: distance_from_to(team_coord, (e.x, e.y)))
+        return nearest_enemies[0]
+
+    @staticmethod
+    def check_can_kill_unit(me, enemy):
+        turn_count = int(floor(me.action_points / me.shoot_cost))
+        summary_damage = turn_count * me.get_damage(me.stance)
+
+        return me.action_points >= me.shoot_cost and summary_damage >= enemy.hitpoints
 
     @staticmethod
     def find_path_from_to(world, coord_from, coord_to):
@@ -333,20 +361,19 @@ class MyStrategy:
 
         """
 
-        enemys = self.get_enemy_into_team_range(world)
-        log_it('find %d enemyes into team range' % len(enemys))
-
-        if len(enemys) > 0:
-            pass
-
-        coord = self.way_points[self.dest_way_point_index]
-        path = self.find_path_from_to(world, (me.x, me.y), coord)
-        log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
-        if len(path) > 0:
-            if me.stance != TrooperStance.STANDING:
-                self._stend_up(move, me, game)
-            else:
-                self._move_to(world, move, game, me, path[0])
+        enemy = self.select_enemy(me, world)
+        if enemy is not None:
+            log_it('find enemy for attack %s' % str(enemy))
+            # todo release
+        else:
+            coord = self.way_points[self.dest_way_point_index]
+            path = self.find_path_from_to(world, (me.x, me.y), coord)
+            log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
+            if len(path) > 0:
+                if me.stance != TrooperStance.STANDING:
+                    self._stend_up(move, me, game)
+                else:
+                    self._move_to(world, move, game, me, path[0])
 
     def _action_medic(self, me, world, game, move):
         """
