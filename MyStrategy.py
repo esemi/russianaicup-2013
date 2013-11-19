@@ -19,6 +19,9 @@ from model.CellType import CellType
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
 CF_range_from_team = 1.2
 
+# коэф. для вычисления максимальной дальности юнита от точки базирования команды
+CF_range_from_team_medic = 0.3
+
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
 
@@ -184,7 +187,24 @@ class MyStrategy:
         if len(ranges_to_team) == 0:
             return False
         else:
-            return max(ranges_to_team) > shoot_range * CF_range_from_team
+            return max(ranges_to_team) > shoot_range * (CF_range_from_team_medic if me.type == TrooperType.FIELD_MEDIC else )
+
+    def select_heal_enemy(self, me, world):
+        """
+        Выбираем союзника для лечения: выбираем ближайшего с неполными хитами
+
+        :rtype Trooper or None
+        """
+
+        units_for_heal = [t for t in world.troopers if t.teammate and t.hitpoints < t.maximal_hitpoints]
+        if len(units_for_heal) == 0:
+            return None
+
+        log_it('find %d units for heal' % len(units_for_heal))
+        print units_for_heal
+        # todo release
+        return None
+
 
     def select_enemy(self, me, world):
         """
@@ -283,7 +303,7 @@ class MyStrategy:
                 break
 
         if map_passability[coord_to[0]][coord_to[1]]['wave_num'] is None:
-            return []  # todo приспосабливаться к финишной точке, к которой не дойти
+            return []
 
         end_point = map_passability[coord_to[0]][coord_to[1]]
 
@@ -427,8 +447,13 @@ class MyStrategy:
         Лечит и ходит/мочит как командир.
 
         """
-        #todo release
-        self._action_commander(me, world, game, move)
+
+        heal_enemy = self.select_heal_enemy()
+        if heal_enemy is not None:
+            log_it('medic heal enemy %s' % str(heal_enemy))
+            # todo release
+        else:
+            self._action_commander(me, world, game, move)
 
 
 if __name__ == '__main__':
