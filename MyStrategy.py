@@ -187,7 +187,8 @@ class MyStrategy:
         if len(ranges_to_team) == 0:
             return False
         else:
-            return max(ranges_to_team) > shoot_range * (CF_range_from_team_medic if me.type == TrooperType.FIELD_MEDIC else )
+            cf = CF_range_from_team_medic if me.type == TrooperType.FIELD_MEDIC else CF_range_from_team
+            return max(ranges_to_team) > shoot_range * cf
 
     def select_heal_enemy(self, me, world):
         """
@@ -448,7 +449,7 @@ class MyStrategy:
 
         """
 
-        heal_enemy = self.select_heal_enemy()
+        heal_enemy = self.select_heal_enemy(me, world)
         if heal_enemy is not None:
             log_it('medic heal enemy %s' % str(heal_enemy))
             # todo release
