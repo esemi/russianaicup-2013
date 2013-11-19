@@ -17,9 +17,9 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.1
+CF_range_from_team = 1.2
 
-# коэф. для вычисления максимальной дальности юнита от точки базирования команды
+# коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
 
 
@@ -75,7 +75,6 @@ def find_cell_neighborhood(coord, map_):
 class MyStrategy:
 
     def __init__(self):
-        self.dest_way_point_index = None
         self.current_path = None
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
@@ -84,23 +83,10 @@ class MyStrategy:
     def move(self, me, world, game, move):
         log_it('new move turn %d unit %d (%s)' % (world.move_index, me.id, str((me.x, me.y))))
 
-        #for i in xrange(100):
-        #    s = time()
-        #    self.find_path_from_to(world, (0, 0), (20, 10))
-        #    print time() - s
-
         if shared.way_points is None:
             self._compute_waypoints(world)
 
         self._action_base(me, world, game, move)
-
-    @property
-    def dest_way_point_index(self):
-        return self._dest_way_point_index
-
-    @dest_way_point_index.setter
-    def dest_way_point_index(self, value):
-        self._dest_way_point_index = value
 
     @property
     def current_path(self):
@@ -168,23 +154,24 @@ class MyStrategy:
         shared.way_points = sorted_waypoints
         log_it('select %s waypoints' % str(sorted_waypoints))
 
-    def _change_current_waypoint(self, me):
+    @staticmethod
+    def change_current_waypoint(me):
         """
         Если юнит достиг видимости вейпоинта - выбирает следующий вейпоинт
         Если вейпоинт ещё не задан - берёт первый из списка
         Если достигнут последний вейпоинт - удерживаем позицию (каждый солдат сам решает как лучше удерживать)
         """
 
-        log_it("current dest waypoint is %s" % str(self.dest_way_point_index))
+        log_it("current dest waypoint is %s" % str(shared.current_dest_waypoint))
 
-        if self.dest_way_point_index is None:
-            self.dest_way_point_index = 0
+        if shared.current_dest_waypoint is None:
+            shared.current_dest_waypoint = 0
 
-        distance_to_waypoint = me.get_distance_to(*shared.way_points[self.dest_way_point_index])
+        distance_to_waypoint = me.get_distance_to(*shared.way_points[shared.current_dest_waypoint])
         if distance_to_waypoint < me.vision_range * CF_range_from_waypoint and \
-                        len(shared.way_points) > self.dest_way_point_index:
-            self.dest_way_point_index += 1
-            log_it("new dest waypoint is %s" % str(self.dest_way_point_index))
+                        len(shared.way_points) > shared.current_dest_waypoint:
+            shared.current_dest_waypoint += 1
+            log_it("new dest waypoint is %s" % str(shared.current_dest_waypoint))
 
     def max_range_from_team_exceeded(self, world, me):
         """
@@ -202,7 +189,7 @@ class MyStrategy:
     def select_enemy(self, me, world):
         """
         Выбираем врага в поле видимости команды
-        если в текущем поле досягаемости оружия есть враг и мы можем убить его за оставшиеся ходя - берём его
+        если в текущем поле досягаемости оружия есть враг и мы можем убить его за оставшиеся ходы - берём его
         иначе ищем врагов в поле видимости команды
             если враги есть - берём ближайшего из них
             иначе - None
@@ -219,11 +206,11 @@ class MyStrategy:
                                                                   e.stance)]
         sorted_visible_enemies = sorted(visible_enemies, key=lambda e: e.hitpoints)
 
-        # если в досягаемости есть враг, которого мы сможем убить за оставшиеся ходы - вернём его
-        if len(sorted_visible_enemies) > 0 and self.check_can_kill_unit(me, sorted_visible_enemies[0]):
+        # если в досягаемости есть враг, которого мы можем атаковать - берём с минимальным кол-вом хитов
+        if len(sorted_visible_enemies) > 0:
             return sorted_visible_enemies[0]
 
-        # берём врага, ближайшего к центру команды
+        #иначе берём врага, ближайшего к центру команды
         team_coord = self.team_avg_coord(world)
         nearest_enemies = sorted(enemies, key=lambda e: distance_from_to(team_coord, (e.x, e.y)))
         return nearest_enemies[0]
@@ -250,6 +237,16 @@ class MyStrategy:
                         coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
+
+        if self.current_path is not None:
+            try:
+                start_index = self.current_path.index(coord_from)
+                end_index = self.current_path.index(coord_to)
+            except ValueError:
+                log_it('cache path failed')
+            else:
+                log_it('cache path indexes %s %s' % (str(start_index), str(end_index)))
+                return self.current_path[start_index+1:end_index]
 
         # карта проходимости юнитов
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
@@ -307,6 +304,9 @@ class MyStrategy:
         path.reverse()
         out = [i['coord'] for i in path]
 
+        self.current_path = out
+        log_it('new path cached')
+
         log_it('find path call end (%s)' % str(out))
         return out
 
@@ -319,6 +319,14 @@ class MyStrategy:
             move.action = ActionType.RAISE_STANCE
 
     @staticmethod
+    def _seat_down(move, me, game):
+        log_it('start lower stance to %s')
+        if me.action_points < game.stance_change_cost:
+            log_it('not enouth AP')
+        else:
+            move.action = ActionType.LOWER_STANCE
+
+    @staticmethod
     def _move_to(world, move, game, me, coord):
         log_it('start move to %s' % str(coord))
         if me.action_points < game.stance_change_cost:
@@ -326,16 +334,16 @@ class MyStrategy:
             return
 
         try:
-            if world.cells[coord[0]][coord[1]] != CellType.FREE:
-                log_it('cell not free')
-                return
+            cell = world.cells[coord[0]][coord[1]]
         except IndexError:
             log_it('cell not found')
-            return
-
-        move.action = ActionType.MOVE
-        move.x = coord[0]
-        move.y = coord[1]
+        else:
+            if cell != CellType.FREE:
+                log_it('cell not free')
+            else:
+                move.action = ActionType.MOVE
+                move.x = coord[0]
+                move.y = coord[1]
 
     @staticmethod
     def _shoot(move, me, enemy):
@@ -347,6 +355,12 @@ class MyStrategy:
             move.x = enemy.x
             move.y = enemy.y
 
+    def _seat_down_or_shoot(self, move, me, enemy, game):
+        if me.stance != TrooperStance.STANDING or me.get_damage(me.stance) >= enemy.hitpoints:
+            self._shoot(move, me, enemy)
+        else:
+            self._seat_down(move, me, game)
+
     def _stand_up_or_move(self, world, move, game, me, coord):
         if me.stance != TrooperStance.STANDING:
             self._stand_up(move, me, game)
@@ -354,7 +368,7 @@ class MyStrategy:
             self._move_to(world, move, game, me, coord)
 
     def _action_base(self, me, world, game, move):
-        self._change_current_waypoint(me)
+        self.change_current_waypoint(me)
 
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
         if self.max_range_from_team_exceeded(world, me):
@@ -389,7 +403,11 @@ class MyStrategy:
             log_it('find enemy for attack %s' % str(enemy.id))
 
             if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
-                self._shoot(move, me, enemy)
+                if world.is_visible(me.shooting_range, me.x, me.y, TrooperStance.KNEELING, enemy.x, enemy.y,
+                                    enemy.stance):
+                    self._seat_down_or_shoot(move, me, enemy, game)
+                else:
+                    self._shoot(move, me, enemy)
             else:
                 path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
                 log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
@@ -397,7 +415,7 @@ class MyStrategy:
                 if len(path) > 0:
                     self._stand_up_or_move(world, move, game, me, path[0])
         else:
-            coord = shared.way_points[self.dest_way_point_index]
+            coord = shared.way_points[shared.current_dest_waypoint]
             path = self.find_path_from_to(world, (me.x, me.y), coord)
             log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
             if len(path) > 0:
