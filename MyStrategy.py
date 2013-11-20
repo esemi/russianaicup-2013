@@ -17,10 +17,13 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 0.9
+CF_range_from_team = 1.0
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
+
+# уровень здоровья врача, при котором он начинает лечить себя первее остальных
+CF_medic_heal_level = 0.6
 
 
 def log_it(msg, level='info'):
@@ -223,6 +226,11 @@ class MyStrategy:
         nearest_units = sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))
 
         # todo оставлять только те цели, до которых можем дойти (либо уже доступных для лечения)
+
+        if nearest_units[0].id == me.id and len(nearest_units) > 1 and \
+                (me.hitpoints / me.maximal_hitpoints) >= CF_medic_heal_level:
+            log_it('medic select other unit for healing instead of himself %s' % str(me.hitpoints))
+            nearest_units.pop(0)
 
         if len(nearest_units) == 1:
             return nearest_units[0]
