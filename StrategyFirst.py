@@ -1,9 +1,6 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# стратегия основанная на попытке передвигаться плотной группой по вейпоинтам и атаковать всеми юнитами одну цель
-# для рассчёта кратчайшего пути использует алгоритм Ли O(n^3) потому не проходит верификацию по времени =((
-
 
 import logging
 
@@ -254,6 +251,16 @@ class MyStrategy:
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
 
+        if self.current_path is not None:
+            try:
+                start_index = self.current_path.index(coord_from)
+                end_index = self.current_path.index(coord_to)
+            except ValueError:
+                log_it('cache path failed')
+            else:
+                log_it('cache path indexes %s %s' % (str(start_index), str(end_index)))
+                return self.current_path[start_index+1:end_index]
+
         # карта проходимости юнитов
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
                             for y, v in enumerate(row)] for x, row in enumerate(world.cells)]
@@ -310,6 +317,9 @@ class MyStrategy:
         path.reverse()
         out = [i['coord'] for i in path]
 
+        self.current_path = out
+        log_it('new path cached')
+
         log_it('find path call end (%s)' % str(out))
         return out
 
@@ -329,16 +339,16 @@ class MyStrategy:
             return
 
         try:
-            if world.cells[coord[0]][coord[1]] != CellType.FREE:
-                log_it('cell not free')
-                return
+            cell = world.cells[coord[0]][coord[1]]
         except IndexError:
             log_it('cell not found')
-            return
-
-        move.action = ActionType.MOVE
-        move.x = coord[0]
-        move.y = coord[1]
+        else:
+            if cell != CellType.FREE:
+                log_it('cell not free')
+            else:
+                move.action = ActionType.MOVE
+                move.x = coord[0]
+                move.y = coord[1]
 
     @staticmethod
     def _shoot(move, me, enemy):

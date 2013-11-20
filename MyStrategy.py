@@ -17,10 +17,7 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.2
-
-# коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team_medic = 0.3
+CF_range_from_team = 0.9
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
@@ -187,10 +184,13 @@ class MyStrategy:
         if len(ranges_to_team) == 0:
             return False
         else:
-            cf = CF_range_from_team_medic if me.type == TrooperType.FIELD_MEDIC else CF_range_from_team
-            return max(ranges_to_team) > shoot_range * cf
+            return max(ranges_to_team) > shoot_range * CF_range_from_team
 
-    def select_heal_enemy(self, me, world):
+    def heal_avaliable(self, me, enemy):
+        return me.get_distance_to(enemy.x, enemy.y) <= 1.0
+
+    @staticmethod
+    def select_heal_enemy(me, world):
         """
         Выбираем союзника для лечения: выбираем ближайшего с неполными хитами
 
@@ -202,10 +202,17 @@ class MyStrategy:
             return None
 
         log_it('find %d units for heal' % len(units_for_heal))
-        print units_for_heal
-        # todo release
-        return None
+        nearest_units = sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))
 
+        # todo оставлять только те цели, до которых можем дойти (либо уже доступных для лечения)
+
+        if len(nearest_units) == 1:
+            return nearest_units[0]
+        elif len(nearest_units) > 1:
+            # todo сравнивать длину пути до юнита вместо гипотенузы
+            return nearest_units[0]
+        else:
+            return None
 
     def select_enemy(self, me, world):
         """
@@ -333,7 +340,7 @@ class MyStrategy:
 
     @staticmethod
     def _stand_up(move, me, game):
-        log_it('start raise stance to %s')
+        log_it('start raise stance')
         if me.action_points < game.stance_change_cost:
             log_it('not enouth AP')
         else:
@@ -341,7 +348,7 @@ class MyStrategy:
 
     @staticmethod
     def _seat_down(move, me, game):
-        log_it('start lower stance to %s')
+        log_it('start lower stance')
         if me.action_points < game.stance_change_cost:
             log_it('not enouth AP')
         else:
@@ -373,6 +380,16 @@ class MyStrategy:
             log_it('not enouth AP')
         else:
             move.action = ActionType.SHOOT
+            move.x = enemy.x
+            move.y = enemy.y
+
+    @staticmethod
+    def _heal(move, me, enemy):
+        log_it('start heal to %s' % str((enemy.x, enemy.y)))
+        if me.action_points < me.shoot_cost:
+            log_it('not enouth AP')
+        else:
+            move.action = ActionType.HEAL
             move.x = enemy.x
             move.y = enemy.y
 
@@ -451,8 +468,15 @@ class MyStrategy:
 
         heal_enemy = self.select_heal_enemy(me, world)
         if heal_enemy is not None:
-            log_it('medic heal enemy %s' % str(heal_enemy))
-            # todo release
+            log_it('medic heal enemy %s' % str(heal_enemy.id))
+            if self.heal_avaliable(me, heal_enemy):
+                self._heal(move, me, heal_enemy)
+            else:
+                path = self.find_path_from_to(world, (me.x, me.y), (heal_enemy.x, heal_enemy.y))
+                log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)), str((me.x, me.y)),
+                                                                          str(path)))
+                if len(path) > 0:
+                    self._stand_up_or_move(world, move, game, me, path[0])
         else:
             self._action_commander(me, world, game, move)
 
