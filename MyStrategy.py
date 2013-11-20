@@ -207,8 +207,16 @@ class MyStrategy:
         else:
             return max(ranges_to_team) > shoot_range * CF_range_from_team
 
+    def need_to_wait_medic(self, me, world):
+        return me.type != TrooperType.FIELD_MEDIC and me.hitpoints < me.maximal_hitpoints and \
+               len([t for t in world.troopers if t.teammate and t.type == TrooperType.FIELD_MEDIC]) == 1
+
     def heal_avaliable(self, me, enemy):
         return me.get_distance_to(enemy.x, enemy.y) <= 1.0
+
+    def cell_free_for_move(self, coord, world):
+        troopers_coord = [t for t in world.troopers if (t.x, t.y) == coord]
+        return world.cells[coord[0]][coord[1]] == CellType.FREE and len(troopers_coord) == 0
 
     @staticmethod
     def select_heal_enemy(me, world):
@@ -380,10 +388,14 @@ class MyStrategy:
         else:
             move.action = ActionType.LOWER_STANCE
 
-    @staticmethod
-    def _move_to(world, move, game, me, coord):
+    def _move_to(self, world, move, game, me, coord):
         log_it('start move to %s' % str(coord))
-        if me.action_points < game.stance_change_cost:
+
+        if me.stance == TrooperStance.PRONE:
+            log_it('not available stance for moving')
+            return
+
+        if me.action_points < (game.standing_move_cost if me.stance == TrooperStance.STANDING else game.kneeling_move_cost):
             log_it('not enouth AP')
             return
 
@@ -392,7 +404,7 @@ class MyStrategy:
         except IndexError:
             log_it('cell not found')
         else:
-            if cell != CellType.FREE:
+            if not self.cell_free_for_move(coord, world):
                 log_it('cell not free')
             else:
                 move.action = ActionType.MOVE
@@ -428,6 +440,12 @@ class MyStrategy:
     def _stand_up_or_move(self, world, move, game, me, coord):
         if me.stance != TrooperStance.STANDING:
             self._stand_up(move, me, game)
+        else:
+            self._move_to(world, move, game, me, coord)
+
+    def _seat_down_or_move(self, world, move, game, me, coord):
+        if me.stance == TrooperStance.STANDING:
+            self._seat_down(move, me, game)
         else:
             self._move_to(world, move, game, me, coord)
 
@@ -483,7 +501,11 @@ class MyStrategy:
             path = self.find_path_from_to(world, (me.x, me.y), coord)
             log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
             if len(path) > 0:
-                self._stand_up_or_move(world, move, game, me, path[0])
+                if self.need_to_wait_medic(me, world):
+                    log_it('wait a medic')
+                    self._seat_down_or_move(world, move, game, me, path[0])
+                else:
+                    self._stand_up_or_move(world, move, game, me, path[0])
 
     def _action_medic(self, me, world, game, move):
         """
