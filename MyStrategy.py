@@ -27,6 +27,7 @@ CF_medic_heal_level = 0.6
 
 
 def log_it(msg, level='info'):
+
     getattr(logging, level)(msg)
 
 
@@ -98,15 +99,17 @@ class MyStrategy:
         self.current_path = None
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
-            level=logging.INFO)
+            level=logging.DEBUG)
 
     def move(self, me, world, game, move):
+        log_it('<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
         log_it('new move turn %d unit %d (%s)' % (world.move_index, me.id, str((me.x, me.y))))
 
         if shared.way_points is None:
             self._compute_waypoints(world)
 
         self._action_base(me, world, game, move)
+        log_it('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>')
 
     @property
     def current_path(self):
@@ -248,12 +251,44 @@ class MyStrategy:
         else:
             return None
 
+    def select_position_for_medic(self, me, world):
+        """
+        Выбираем позицию для хиллера, при атакующей остальной команде
+        берём всех солдат, ищем вокруг них свободные клетки (только от препятствий)
+        выбираем из клеток ту, которая находится в зоне обстрела врагов меньше всего
+
+        """
+        # todo переписать этот ночной код Оо
+
+        map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE)) for y, v in enumerate(row)]
+                           for x, row in enumerate(world.cells)]
+
+        troopers = [t for t in world.troopers if t.teammate and t.id != me.id]
+
+        for t in troopers:
+            map_passability[t.x][t.y]['passability'] = False
+
+        print map_passability
+        print troopers
+
+        cells = []
+        for t in troopers:
+            cells += find_cell_neighborhood((t.x, t.y), map_passability)
+        cells
+
+        sorted_cells = []
+        enemies = [t for t in world.troopers if not t.teammate]
+        for cells
+
+
+        return (me.x, me.y)
+
     def select_enemy(self, me, world):
         """
         Выбираем врага в поле видимости команды
         если в текущем поле досягаемости оружия есть враг и мы можем убить его за оставшиеся ходы - берём его
         иначе ищем врагов в поле видимости команды
-            если враги есть - берём ближайшего из них
+            если враги есть - берём ближайшего к центру команды из них
             иначе - None
 
         :rtype Trooper or None
@@ -263,7 +298,7 @@ class MyStrategy:
         if len(enemies) == 0:
             return None
 
-        # проверяем, нет ли среди ближайших врагов такого, который можно было бы атаковать
+        # проверяем, нет ли среди ближайших врагов такого, которого можно было бы атаковать
         visible_enemies = [e for e in enemies if world.is_visible(me.shooting_range, me.x, me.y, me.stance, e.x, e.y,
                                                                   e.stance)]
         sorted_visible_enemies = sorted(visible_enemies, key=lambda e: e.hitpoints)
@@ -296,7 +331,9 @@ class MyStrategy:
         log_it('find path call start (%s to %s)' % (str(coord_from), str(coord_to)))
 
         if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
-                        coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
+            coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height or \
+            coord_from == coord_to:
+
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
 
@@ -308,7 +345,12 @@ class MyStrategy:
                 log_it('cache path failed')
             else:
                 log_it('cache path indexes %s %s' % (str(start_index), str(end_index)))
-                return self.current_path[start_index+1:end_index]
+                if start_index < end_index:
+                    return self.current_path[start_index+1:end_index]
+                else:
+                    return self.current_path[end_index+1:start_index][::-1]
+
+
 
         # карта проходимости юнитов
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
@@ -395,11 +437,14 @@ class MyStrategy:
     def _move_to(self, world, move, game, me, coord):
         log_it('start move to %s' % str(coord))
 
-        if me.stance == TrooperStance.PRONE:
-            log_it('not available stance for moving')
-            return
+        if me.stance == TrooperStance.STANDING:
+            cost = game.standing_move_cost
+        elif me.stance == TrooperStance.KNEELING:
+            cost = game.kneeling_move_cost
+        else:
+            cost = game.prone_move_cost
 
-        if me.action_points < (game.standing_move_cost if me.stance == TrooperStance.STANDING else game.kneeling_move_cost):
+        if me.action_points < cost:
             log_it('not enouth AP')
             return
 
@@ -467,7 +512,7 @@ class MyStrategy:
             coords_to = sorted(team_coords, key=lambda c: me.get_distance_to(*c))[0]
 
             path = self.find_path_from_to(world, (me.x, me.y), coords_to)
-            log_it('path for return to team %s' % str(path))
+            log_it('path for return to team %s' % str(path), 'debug')
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
                     self._stand_up(move, me, game)
@@ -489,30 +534,9 @@ class MyStrategy:
 
         enemy = self.select_enemy(me, world)
         if enemy is not None:
-            log_it('find enemy for attack %s' % str(enemy.id))
-
-            lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
-            if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
-                if world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
-                    self._lower_stance_or_shoot(move, me, enemy, game)
-                else:
-                    self._shoot(move, me, enemy)
-            else:
-                path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
-                log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
-                                                                     str(path)))
-                if len(path) > 0:
-                    self._stand_up_or_move(world, move, game, me, path[0])
+            self._attack_unit(world, me, move, game, enemy)
         else:
-            coord = shared.way_points[shared.current_dest_waypoint]
-            path = self.find_path_from_to(world, (me.x, me.y), coord)
-            log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)))
-            if len(path) > 0:
-                if self.need_to_wait_medic(me, world):
-                    log_it('wait a medic')
-                    self._seat_down_or_move(world, move, game, me, path[0])
-                else:
-                    self._stand_up_or_move(world, move, game, me, path[0])
+            self._going_to_waypoint(world, me, move, game)
 
     def _action_medic(self, me, world, game, move):
         """
@@ -533,8 +557,21 @@ class MyStrategy:
             log_it('medic was left alone and move as commander')
             self._action_commander(me, world, game, move)
         elif heal_enemy is None:
-            log_it('medic move as commander')
-            self._action_commander(me, world, game, move)
+            log_it('medic move')
+
+            team_enemies = filter(lambda x: x is not None, [self.select_enemy(t, world) for t in world.troopers
+                                                            if t.teammate and t.id != me.id])
+            if len(team_enemies) > 0:
+                log_it('medic going to team-rear position')
+                position = self.select_position_for_medic(me, world)
+                log_it('find %s team-rear position' % str(position))
+                path = self.find_path_from_to(world, (me.x, me.y), position)
+                log_it('path for going to team rear position %s from %s is %s' % (str(position), str((me.x, me.y)),
+                                                                                  str(path)), 'debug')
+                if len(path) > 0:
+                    self._stand_up_or_move(world, move, game, me, path[0])
+            else:
+                self._going_to_waypoint(world, me, move, game)
         else:
             log_it('medic heal enemy %s' % str(heal_enemy.id))
             if self.heal_avaliable(me, heal_enemy):
@@ -542,10 +579,36 @@ class MyStrategy:
             else:
                 path = self.find_path_from_to(world, (me.x, me.y), (heal_enemy.x, heal_enemy.y))
                 log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)),
-                                                                          str((me.x, me.y)), str(path)))
+                                                                          str((me.x, me.y)), str(path)), 'debug')
                 if len(path) > 0:
                     self._stand_up_or_move(world, move, game, me, path[0])
 
+    def _going_to_waypoint(self, world, me, move, game):
+        log_it('going to waypoint index %s' % str(shared.current_dest_waypoint))
+        coord = shared.way_points[shared.current_dest_waypoint]
+        path = self.find_path_from_to(world, (me.x, me.y), coord)
+        log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)), 'debug')
+        if len(path) > 0:
+            if self.need_to_wait_medic(me, world):
+                log_it('wait a medic')
+                self._seat_down_or_move(world, move, game, me, path[0])
+            else:
+                self._stand_up_or_move(world, move, game, me, path[0])
+
+    def _attack_unit(self, world, me, move, game, enemy):
+        log_it('attack enemy id %s' % str(enemy.id))
+        lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
+        if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
+            if world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
+                self._lower_stance_or_shoot(move, me, enemy, game)
+            else:
+                self._shoot(move, me, enemy)
+        else:
+            path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
+            log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
+                                                                 str(path)))
+            if len(path) > 0:
+                self._stand_up_or_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
