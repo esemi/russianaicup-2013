@@ -17,7 +17,7 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.0
+CF_range_from_team = 0.9
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
@@ -375,7 +375,9 @@ class MyStrategy:
     @staticmethod
     def _stand_up(move, me, game):
         log_it('start raise stance')
-        if me.action_points < game.stance_change_cost:
+        if me.stance == TrooperStance.STANDING:
+            log_it('now max raise stance')
+        elif me.action_points < game.stance_change_cost:
             log_it('not enouth AP')
         else:
             move.action = ActionType.RAISE_STANCE
@@ -383,7 +385,9 @@ class MyStrategy:
     @staticmethod
     def _seat_down(move, me, game):
         log_it('start lower stance')
-        if me.action_points < game.stance_change_cost:
+        if me.stance == TrooperStance.PRONE:
+            log_it('now max lower stance')
+        elif me.action_points < game.stance_change_cost:
             log_it('not enouth AP')
         else:
             move.action = ActionType.LOWER_STANCE
@@ -431,11 +435,14 @@ class MyStrategy:
             move.x = enemy.x
             move.y = enemy.y
 
-    def _seat_down_or_shoot(self, move, me, enemy, game):
-        if me.stance != TrooperStance.STANDING or me.get_damage(me.stance) >= enemy.hitpoints:
+    def _lower_stance_or_shoot(self, move, me, enemy, game):
+        if me.get_damage(me.stance) * int(floor(me.action_points / me.shoot_cost)) >= enemy.hitpoints:
             self._shoot(move, me, enemy)
         else:
-            self._seat_down(move, me, game)
+            if me.stance != TrooperStance.PRONE:
+                self._seat_down(move, me, game)
+            else:
+                self._shoot(move, me, enemy)
 
     def _stand_up_or_move(self, world, move, game, me, coord):
         if me.stance != TrooperStance.STANDING:
@@ -484,10 +491,10 @@ class MyStrategy:
         if enemy is not None:
             log_it('find enemy for attack %s' % str(enemy.id))
 
+            lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
             if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
-                if world.is_visible(me.shooting_range, me.x, me.y, TrooperStance.KNEELING, enemy.x, enemy.y,
-                                    enemy.stance):
-                    self._seat_down_or_shoot(move, me, enemy, game)
+                if world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
+                    self._lower_stance_or_shoot(move, me, enemy, game)
                 else:
                     self._shoot(move, me, enemy)
             else:
