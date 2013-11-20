@@ -184,11 +184,12 @@ class MyStrategy:
         if shared.current_dest_waypoint is None:
             shared.current_dest_waypoint = 0
 
-        distance_to_waypoint = me.get_distance_to(*shared.way_points[shared.current_dest_waypoint])
-        if distance_to_waypoint < me.vision_range * CF_range_from_waypoint and \
-                        len(shared.way_points) > shared.current_dest_waypoint:
-            shared.current_dest_waypoint += 1
-            log_it("new dest waypoint is %s" % str(shared.current_dest_waypoint))
+        if len(shared.way_points) > shared.current_dest_waypoint:
+            distance_to_waypoint = me.get_distance_to(*shared.way_points[shared.current_dest_waypoint])
+            if distance_to_waypoint < me.vision_range * CF_range_from_waypoint:
+                shared.current_dest_waypoint += 1
+                log_it("new dest waypoint is %s" % str(shared.current_dest_waypoint))
+
 
     def max_range_from_team_exceeded(self, world, me):
         """
@@ -480,25 +481,34 @@ class MyStrategy:
         """
         Держится со всеми.
         Пропускает первый ход, чтобы остальные ушли вперёд
+        Если остался один - не лечит, а стреляет напоследок
+        Если своё здоровье больше лимита - лечит остальных
         Лечит и ходит/мочит как командир.
 
         """
 
         heal_enemy = self.select_heal_enemy(me, world)
-        if heal_enemy is not None:
+        team_size = len([t for t in world.troopers if t.teammate])
+
+        if world.move_index == 0:
+            log_it('medic pass first turn')
+        elif team_size == 1:
+            log_it('medic was left alone and move as commander')
+            self._action_commander(me, world, game, move)
+        elif heal_enemy is None:
+            log_it('medic move as commander')
+            self._action_commander(me, world, game, move)
+        else:
             log_it('medic heal enemy %s' % str(heal_enemy.id))
             if self.heal_avaliable(me, heal_enemy):
                 self._heal(move, me, heal_enemy)
             else:
                 path = self.find_path_from_to(world, (me.x, me.y), (heal_enemy.x, heal_enemy.y))
-                log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)), str((me.x, me.y)),
-                                                                          str(path)))
+                log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)),
+                                                                          str((me.x, me.y)), str(path)))
                 if len(path) > 0:
                     self._stand_up_or_move(world, move, game, me, path[0])
-        elif world.move_index == 0:
-            log_it('medic pass first turn')
-        else:
-            self._action_commander(me, world, game, move)
+
 
 
 if __name__ == '__main__':
