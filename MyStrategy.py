@@ -238,6 +238,10 @@ class MyStrategy:
                len([t for t in world.troopers if t.teammate and t.type == TrooperType.FIELD_MEDIC]) == 1
 
     @staticmethod
+    def could_and_need_use_ration(me, game):
+        return me.action_points >= game.field_ration_eat_cost and me.holding_field_ration
+
+    @staticmethod
     def could_and_need_use_grenade(me, enemy, game, world):
 
         # проверяем, не заденем ли мы союзных юнитов
@@ -489,7 +493,7 @@ class MyStrategy:
         try:
             cell = world.cells[coord[0]][coord[1]]
         except IndexError:
-            log_it('cell not found')
+            log_it('cell not found', 'warn')
         else:
             if not self.cell_free_for_move(coord, world):
                 log_it('cell not free')
@@ -497,6 +501,14 @@ class MyStrategy:
                 move.action = ActionType.MOVE
                 move.x = coord[0]
                 move.y = coord[1]
+
+    @staticmethod
+    def _eat_ration(move, me, game):
+        log_it('start eat ration')
+        if me.action_points < game.field_ration_eat_cost:
+            log_it('not enouth AP', 'warn')
+        else:
+            move.action = ActionType.EAT_FIELD_RATION
 
     @staticmethod
     def _shoot_grenade(move, me, enemy, game):
@@ -573,13 +585,13 @@ class MyStrategy:
             log_it('path for return to team %s' % str(path), 'debug')
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
-                    self._stand_up(move, me, game)
+                    return self._stand_up(move, me, game)
                 else:
-                    self._move_to(world, move, game, me, path[0])
+                    return self._move_to(world, move, game, me, path[0])
         else:
             method = self.select_action_by_type(me.type)
             log_it('select %s action method' % method)
-            getattr(self, method)(me, world, game, move)
+            return getattr(self, method)(me, world, game, move)
 
     def _action_commander(self, me, world, game, move):
         """
@@ -592,9 +604,9 @@ class MyStrategy:
 
         enemy = self.select_enemy(me, world)
         if enemy is not None:
-            self._attack_unit(world, me, move, game, enemy)
+            return self._attack_unit(world, me, move, game, enemy)
         else:
-            self._going_to_waypoint(world, me, move, game)
+            return self._going_to_waypoint(world, me, move, game)
 
     def _action_medic(self, me, world, game, move):
         """
@@ -613,7 +625,7 @@ class MyStrategy:
             log_it('medic pass first turn')
         elif team_size == 1:
             log_it('medic was left alone and move as commander')
-            self._action_commander(me, world, game, move)
+            return self._action_commander(me, world, game, move)
         elif heal_enemy is None:
             log_it('medic mode on')
             team_enemies = filter(lambda x: x is not None, [self.select_enemy(t, world) for t in world.troopers
@@ -627,22 +639,24 @@ class MyStrategy:
                     log_it('path for going to team rear position %s from %s is %s' % (str(position), str((me.x, me.y)),
                                                                                       str(path)), 'debug')
                     if len(path) > 0:
-                        self._stand_up_or_move(world, move, game, me, path[0])
+                        return self._stand_up_or_move(world, move, game, me, path[0])
             else:
-                self._going_to_waypoint(world, me, move, game)
+                return self._going_to_waypoint(world, me, move, game)
         else:
             log_it('medic heal enemy %s' % str(heal_enemy.hitpoints))
             if self.heal_avaliable(me, heal_enemy):
-                if self.could_and_need_use_medikit(me, heal_enemy, game):
-                    self._use_medikit(move, me, heal_enemy, game)
+                if self.could_and_need_use_ration(me, game):
+                    return self._eat_ration(move, me, game)
+                elif self.could_and_need_use_medikit(me, heal_enemy, game):
+                    return self._use_medikit(move, me, heal_enemy, game)
                 else:
-                    self._heal(move, me, heal_enemy, game)
+                    return self._heal(move, me, heal_enemy, game)
             else:
                 path = self.find_path_from_to(world, (me.x, me.y), (heal_enemy.x, heal_enemy.y))
                 log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)),
                                                                           str((me.x, me.y)), str(path)), 'debug')
                 if len(path) > 0:
-                    self._stand_up_or_move(world, move, game, me, path[0])
+                    return self._stand_up_or_move(world, move, game, me, path[0])
 
     def _going_to_waypoint(self, world, me, move, game):
         log_it('going to waypoint index %s' % str(shared.current_dest_waypoint))
@@ -652,27 +666,29 @@ class MyStrategy:
         if len(path) > 0:
             if self.need_to_wait_medic(me, world):
                 log_it('wait a medic')
-                self._seat_down_or_move(world, move, game, me, path[0])
+                return self._seat_down_or_move(world, move, game, me, path[0])
             else:
-                self._stand_up_or_move(world, move, game, me, path[0])
+                return self._stand_up_or_move(world, move, game, me, path[0])
 
     def _attack_unit(self, world, me, move, game, enemy):
         log_it('attack enemy id %s (hits %s)' % (str(enemy.id), str(enemy.hitpoints)))
         lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
 
         if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
-            if self.could_and_need_use_grenade(me, enemy, game, world):
-                self._shoot_grenade(move, me, enemy, game)
+            if self.could_and_need_use_ration(me, game):
+                return self._eat_ration(move, me, game)
+            elif self.could_and_need_use_grenade(me, enemy, game, world):
+                return self._shoot_grenade(move, me, enemy, game)
             elif world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
-                self._lower_stance_or_shoot(move, me, enemy, game)
+                return self._lower_stance_or_shoot(move, me, enemy, game)
             else:
-                self._shoot(move, me, enemy)
+                return self._shoot(move, me, enemy)
         else:
             path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
             log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
                                                                  str(path)))
             if len(path) > 0:
-                self._stand_up_or_move(world, move, game, me, path[0])
+                return self._stand_up_or_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
