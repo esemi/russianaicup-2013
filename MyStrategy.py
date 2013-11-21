@@ -14,10 +14,11 @@ from model.ActionType import ActionType
 from model.TrooperStance import TrooperStance
 from model.TrooperType import TrooperType
 from model.CellType import CellType
+from model.BonusType import BonusType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.05
+CF_range_from_team = 1.2
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
@@ -254,6 +255,29 @@ class MyStrategy:
 
         return me.action_points >= game.grenade_throw_cost and me.holding_grenade and \
                world.is_visible(game.grenade_throw_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance)
+
+    def find_bonus(self, me, world):
+        """
+        Выбираем бонусы для подбора данным юнитом
+        проверяем, что не выйдем за оперативный радиус команды, пока идём до бонуса
+
+        """
+
+        holding_types = []
+        if me.holding_grenade:
+            holding_types.append(BonusType.GRENADE)
+        if me.holding_medikit:
+            holding_types.append(BonusType.MEDIKIT)
+        if me.holding_field_ration:
+            holding_types.append(BonusType.FIELD_RATION)
+
+        bonuses = filter(lambda b: not self.max_range_from_team_exceeded(world, b) and b.type not in holding_types,
+                         world.bonuses)
+
+        if len(bonuses) > 0:
+            return sorted(bonuses, key=lambda b: me.get_distance_to_unit(b))[0]
+        else:
+            return None
 
     @staticmethod
     def could_and_need_use_medikit(me, heal_enemy, game):
@@ -664,15 +688,29 @@ class MyStrategy:
                     return self._stand_up_or_move(world, move, game, me, path[0])
 
     def _going_to_waypoint(self, world, me, move, game):
+        nearest_bonus = self.find_bonus(me, world)
+        if nearest_bonus is not None:
+            log_it('going to bonus %s' % str(nearest_bonus.type))
+            # todo test not cached path finder
+            path = self.find_path_from_to(world, (me.x, me.y), (nearest_bonus.x, nearest_bonus.y))
+            log_it('path for going to bonus %s from %s is %s' % (str((nearest_bonus.x, nearest_bonus.y)),
+                                                                 str((me.x, me.y)), str(path)), 'debug')
+            if len(path) > 0:
+                return self._basic_move(path, me, world, move, game)
+
         log_it('going to waypoint index %s' % str(shared.current_dest_waypoint))
         coord = shared.way_points[shared.current_dest_waypoint]
         path = self.find_path_from_to(world, (me.x, me.y), coord)
         log_it('path for going to waypoint %s from %s is %s' % (str(coord), str((me.x, me.y)), str(path)), 'debug')
+        return self._basic_move(path, me, world, move, game)
+
+    def _basic_move(self, path, me, world, move, game):
         if len(path) > 0:
             if self.need_to_wait_medic(me, world):
                 log_it('wait a medic')
                 return self._seat_down_or_move(world, move, game, me, path[0])
             else:
+                log_it('stend up and move')
                 return self._stand_up_or_move(world, move, game, me, path[0])
 
     def _attack_unit(self, world, me, move, game, enemy):
