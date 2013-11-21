@@ -599,11 +599,16 @@ class MyStrategy:
         Проверяет, нет ли в радиусе досягаемости отряда целей.
         Если нет - встаёт и идёт дальше по направлению.
         Если есть - пытается достичь позиции для атаки
+        Если есть аптечка - занимается самолечением (других не лечит - геморно)
 
         """
 
         enemy = self.select_enemy(me, world)
-        if enemy is not None:
+
+        if self.could_and_need_use_medikit(me, me, game):
+            log_it('soldier use medikit')
+            return self._use_medikit(move, me, me, game)
+        elif enemy is not None:
             return self._attack_unit(world, me, move, game, enemy)
         else:
             return self._going_to_waypoint(world, me, move, game)
