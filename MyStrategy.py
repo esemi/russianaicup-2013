@@ -72,6 +72,23 @@ def find_cell_neighborhood(coord, map_):
     return filter(lambda x: x['passability'], out)
 
 
+def get_waypoint_near_of_coord(cells, coord):
+    """
+    Возвращаем координаты свободного вейпоинта поблизости от требуемых координат
+
+    """
+
+    map_ = []
+    for x, row in enumerate(cells):
+        for y, v in enumerate(row):
+            if v == CellType.FREE:
+                map_.append(dict(coord=(x, y), distance=distance_from_to(coord, (x, y))))
+
+    sorted_map = sorted(map_, key=lambda x: x['distance'])
+
+    return sorted_map[0]['coord']
+
+
 class MyStrategy:
 
     def __init__(self):
@@ -127,20 +144,20 @@ class MyStrategy:
     def _compute_waypoints(self, world):
         """
         Вычисляем waypoint-ы - сперва все углы прямоугольной карты а в конец добавляем координаты центра
+        берём только свободные от препятствий точки на карте (в окресностях углов и центра)
 
         """
-        # todo оставлять только досягаемые вейкпоинты
 
         current_coord = self.team_avg_coord(world)
         log_it("compute current command coord %s" % str(current_coord))
 
-        center_coord = (int(world.width / 2), int(world.height / 2))
+        center_coord = get_waypoint_near_of_coord(world.cells, (int(world.width / 2), int(world.height / 2)))
 
         angles = [
-            (0, 0),
-            (0, world.height - 1),
-            (world.width - 1, world.height - 1),
-            (world.width - 1, 0)]
+            get_waypoint_near_of_coord(world.cells, (0, 0)),
+            get_waypoint_near_of_coord(world.cells, (0, world.height - 1)),
+            get_waypoint_near_of_coord(world.cells, (world.width - 1, world.height - 1)),
+            get_waypoint_near_of_coord(world.cells, (world.width - 1, 0))]
 
         sorted_waypoints = []
         for k in xrange(len(angles)):
