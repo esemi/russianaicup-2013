@@ -479,6 +479,7 @@ class MyStrategy:
     def _action_medic(self, me, world, game, move):
         """
         Держится со всеми.
+        Пропускает первый ход, чтобы остальные ушли вперёд
         Лечит и ходит/мочит как командир.
 
         """
@@ -494,6 +495,8 @@ class MyStrategy:
                                                                           str(path)))
                 if len(path) > 0:
                     self._stand_up_or_move(world, move, game, me, path[0])
+        elif world.move_index == 0:
+            log_it('medic pass first turn')
         else:
             self._action_commander(me, world, game, move)
 
