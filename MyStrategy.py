@@ -238,6 +238,20 @@ class MyStrategy:
                len([t for t in world.troopers if t.teammate and t.type == TrooperType.FIELD_MEDIC]) == 1
 
     @staticmethod
+    def could_and_need_use_grenade(me, enemy, game, world):
+
+        # проверяем, не заденем ли мы союзных юнитов
+        map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE)) for y, v in enumerate(row)]
+                           for x, row in enumerate(world.cells)]
+        damage_cells = [c['coord'] for c in find_cell_neighborhood((enemy.x, enemy.y), map_passability)]
+        if len([t for t in world.troopers if t.teammate and (t.x, t.y) in damage_cells]) > 0:
+            log_it('not use grenade (team units are damaged)')
+            return False
+
+        return me.action_points >= game.grenade_throw_cost and me.holding_grenade and \
+               world.is_visible(game.grenade_throw_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance)
+
+    @staticmethod
     def could_and_need_use_medikit(me, heal_enemy, game):
         heal_bonus = game.field_medic_heal_bonus_hitpoints * CF_medkit_bonus_hits if me.id != heal_enemy.id else \
             game.field_medic_heal_self_bonus_hitpoints
@@ -327,7 +341,7 @@ class MyStrategy:
         team_coord = self.team_avg_coord(world)
         nearest_enemies = sorted(enemies, key=lambda e: distance_from_to(team_coord, (e.x, e.y)))
 
-        # todo выбор тех, кто может стрелять в нас всегда приоритетнее, чем тех, которые не могут дострелить до команды
+        # todo выбор тех, кто может стрелять в нас всегда приоритетнее, чем те, которые не могут дострелить до команды
 
         return nearest_enemies[0]
 
@@ -485,6 +499,16 @@ class MyStrategy:
                 move.y = coord[1]
 
     @staticmethod
+    def _shoot_grenade(move, me, enemy, game):
+        log_it('start shoot grenade to %s' % str((enemy.x, enemy.y)))
+        if me.action_points < game.grenade_throw_cost:
+            log_it('not enouth AP', 'warn')
+        else:
+            move.action = ActionType.THROW_GRENADE
+            move.x = enemy.x
+            move.y = enemy.y
+
+    @staticmethod
     def _shoot(move, me, enemy):
         log_it('start shoot to %s' % str((enemy.x, enemy.y)))
         if me.action_points < me.shoot_cost:
@@ -633,10 +657,13 @@ class MyStrategy:
                 self._stand_up_or_move(world, move, game, me, path[0])
 
     def _attack_unit(self, world, me, move, game, enemy):
-        log_it('attack enemy id %s' % str(enemy.id))
+        log_it('attack enemy id %s (hits %s)' % (str(enemy.id), str(enemy.hitpoints)))
         lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
+
         if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
-            if world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
+            if self.could_and_need_use_grenade(me, enemy, game, world):
+                self._shoot_grenade(move, me, enemy, game)
+            elif world.is_visible(me.shooting_range, me.x, me.y, lower_stance, enemy.x, enemy.y, enemy.stance):
                 self._lower_stance_or_shoot(move, me, enemy, game)
             else:
                 self._shoot(move, me, enemy)
