@@ -17,17 +17,19 @@ from model.CellType import CellType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 0.9
+CF_range_from_team = 1.05
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
 
-# уровень здоровья врача, при котором он начинает лечить себя первее остальных
-CF_medic_heal_level = 0.6
+# уровень здоровья юнита, при котором он получает приоритет на лечение
+CF_medic_heal_level = 0.7
+
+# множитель для минимума недостающих хитов здоровья юнита при решении использовать аптечку или нет
+CF_medkit_bonus_hits = 0.8
 
 
 def log_it(msg, level='info'):
-
     getattr(logging, level)(msg)
 
 
@@ -97,7 +99,6 @@ def find_cell_neighborhood(coord, map_, allow_diagonaly=False):
             except IndexError:
                 pass
 
-
     return filter(lambda x: x['passability'], out)
 
 
@@ -112,10 +113,7 @@ def get_waypoint_near_of_coord(cells, coord):
         for y, v in enumerate(row):
             if v == CellType.FREE:
                 map_.append(dict(coord=(x, y), distance=distance_from_to(coord, (x, y))))
-
-    sorted_map = sorted(map_, key=lambda x: x['distance'])
-
-    return sorted_map[0]['coord']
+    return sorted(map_, key=lambda x: x['distance'])[0]['coord']
 
 
 class MyStrategy:
@@ -234,19 +232,29 @@ class MyStrategy:
         else:
             return max(ranges_to_team) > shoot_range * CF_range_from_team
 
-    def need_to_wait_medic(self, me, world):
+    @staticmethod
+    def need_to_wait_medic(me, world):
         return me.type != TrooperType.FIELD_MEDIC and me.hitpoints < me.maximal_hitpoints and \
                len([t for t in world.troopers if t.teammate and t.type == TrooperType.FIELD_MEDIC]) == 1
 
-    def heal_avaliable(self, me, enemy):
+    @staticmethod
+    def could_and_need_use_medikit(me, heal_enemy, game):
+        heal_bonus = game.field_medic_heal_bonus_hitpoints * CF_medkit_bonus_hits if me.id != heal_enemy.id else \
+            game.field_medic_heal_self_bonus_hitpoints
+
+        return me.action_points >= game.medikit_use_cost and me.holding_medikit and \
+               (heal_enemy.maximal_hitpoints - heal_enemy.hitpoints) >= heal_bonus
+
+    @staticmethod
+    def heal_avaliable(me, enemy):
         return me.get_distance_to(enemy.x, enemy.y) <= 1.0
 
-    def cell_free_for_move(self, coord, world):
+    @staticmethod
+    def cell_free_for_move(coord, world):
         troopers_coord = [t for t in world.troopers if (t.x, t.y) == coord]
         return world.cells[coord[0]][coord[1]] == CellType.FREE and len(troopers_coord) == 0
 
-    @staticmethod
-    def select_heal_enemy(me, world):
+    def select_heal_enemy(self, me, world):
         """
         Выбираем союзника для лечения: выбираем ближайшего с неполными хитами
 
@@ -258,22 +266,15 @@ class MyStrategy:
             return None
 
         log_it('find %d units for heal' % len(units_for_heal))
-        nearest_units = sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))
 
-        # todo оставлять только те цели, до которых можем дойти (либо уже доступных для лечения)
+        avaliable_for_heal = filter(lambda x: self.heal_avaliable(me, x) and
+                                    (x.hitpoints / x.maximal_hitpoints) < CF_medic_heal_level, units_for_heal)
 
-        if nearest_units[0].id == me.id and len(nearest_units) > 1 and \
-                (me.hitpoints / me.maximal_hitpoints) >= CF_medic_heal_level:
-            log_it('medic select other unit for healing instead of himself %s' % str(me.hitpoints))
-            nearest_units.pop(0)
-
-        if len(nearest_units) == 1:
-            return nearest_units[0]
-        elif len(nearest_units) > 1:
-            # todo сравнивать длину пути до юнита вместо гипотенузы
-            return nearest_units[0]
+        if len(avaliable_for_heal) > 0:  # берём соседа с минимальным здоровьем
+            log_it('find %d heal neighborhoods' % len(avaliable_for_heal))
+            return sorted(avaliable_for_heal, key=lambda e: e.hitpoints)[0]
         else:
-            return None
+            return sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))[0]
 
     def select_position_for_medic(self, me, world):
         """
@@ -373,11 +374,7 @@ class MyStrategy:
                     path = self.current_path[start_index+1:end_index]
                 else:
                     path = self.current_path[end_index+1:start_index][::-1]
-
-                if len(path) == 0 or len([t for t in world.troopers if (t.x, t.y) == path[0]]) == 0:
-                    return path
-                else:
-                    log_it('pass cached path (it busy by units)')
+                return path
 
         # карта проходимости юнитов
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
@@ -447,7 +444,7 @@ class MyStrategy:
         if me.stance == TrooperStance.STANDING:
             log_it('now max raise stance')
         elif me.action_points < game.stance_change_cost:
-            log_it('not enouth AP')
+            log_it('not enouth AP', 'warn')
         else:
             move.action = ActionType.RAISE_STANCE
 
@@ -457,7 +454,7 @@ class MyStrategy:
         if me.stance == TrooperStance.PRONE:
             log_it('now max lower stance')
         elif me.action_points < game.stance_change_cost:
-            log_it('not enouth AP')
+            log_it('not enouth AP', 'warn')
         else:
             move.action = ActionType.LOWER_STANCE
 
@@ -472,7 +469,7 @@ class MyStrategy:
             cost = game.prone_move_cost
 
         if me.action_points < cost:
-            log_it('not enouth AP')
+            log_it('not enouth AP', 'warn')
             return
 
         try:
@@ -491,19 +488,29 @@ class MyStrategy:
     def _shoot(move, me, enemy):
         log_it('start shoot to %s' % str((enemy.x, enemy.y)))
         if me.action_points < me.shoot_cost:
-            log_it('not enouth AP')
+            log_it('not enouth AP', 'warn')
         else:
             move.action = ActionType.SHOOT
             move.x = enemy.x
             move.y = enemy.y
 
     @staticmethod
-    def _heal(move, me, enemy):
+    def _heal(move, me, enemy, game):
         log_it('start heal to %s' % str((enemy.x, enemy.y)))
-        if me.action_points < me.shoot_cost:
-            log_it('not enouth AP')
+        if me.action_points < game.field_medic_heal_cost:
+            log_it('not enouth AP', 'warn')
         else:
             move.action = ActionType.HEAL
+            move.x = enemy.x
+            move.y = enemy.y
+
+    @staticmethod
+    def _use_medikit(move, me, enemy, game):
+        log_it('start use medikit to %s' % str((enemy.x, enemy.y)))
+        if me.action_points < game.medikit_use_cost:
+            log_it('not enouth AP', 'warn')
+        else:
+            move.action = ActionType.USE_MEDIKIT
             move.x = enemy.x
             move.y = enemy.y
 
@@ -600,9 +607,12 @@ class MyStrategy:
             else:
                 self._going_to_waypoint(world, me, move, game)
         else:
-            log_it('medic heal enemy %s' % str(heal_enemy.id))
+            log_it('medic heal enemy %s' % str(heal_enemy.hitpoints))
             if self.heal_avaliable(me, heal_enemy):
-                self._heal(move, me, heal_enemy)
+                if self.could_and_need_use_medikit(me, heal_enemy, game):
+                    self._use_medikit(move, me, heal_enemy, game)
+                else:
+                    self._heal(move, me, heal_enemy, game)
             else:
                 path = self.find_path_from_to(world, (me.x, me.y), (heal_enemy.x, heal_enemy.y))
                 log_it('path for going to heal enemy %s from %s is %s' % (str((heal_enemy.x, heal_enemy.y)),
