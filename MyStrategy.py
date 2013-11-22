@@ -224,7 +224,7 @@ class MyStrategy:
                 shared.current_dest_waypoint += 1
                 log_it("new dest waypoint is %s" % str(shared.current_dest_waypoint))
 
-    def max_range_from_team_exceeded(self, world, me):
+    def max_range_from_team_exceeded(self, world, me, is_medic=False):
         """
         Проверяем - не ушёл ли юнит слишком далеко от отряда:
 
@@ -232,7 +232,7 @@ class MyStrategy:
 
         shoot_range = self.team_avg_shooting_range(world)
         ranges_to_team = [me.get_distance_to(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
-        coef = CF_range_from_team if me.type != TrooperType.FIELD_MEDIC else CF_range_from_team_medic
+        coef = CF_range_from_team if not is_medic else CF_range_from_team_medic
         if len(ranges_to_team) == 0:
             return False
         else:
@@ -276,7 +276,9 @@ class MyStrategy:
         if me.holding_field_ration:
             holding_types.append(BonusType.FIELD_RATION)
 
-        bonuses = filter(lambda b: not self.max_range_from_team_exceeded(world, b) and b.type not in holding_types and
+        is_medic = me.type == TrooperType.FIELD_MEDIC
+        bonuses = filter(lambda b: not self.max_range_from_team_exceeded(world, b, is_medic) and
+                                   b.type not in holding_types and
                                    me.get_distance_to_unit(b) <= CF_range_bonus_for_me, world.bonuses)
 
         if len(bonuses) > 0:
@@ -606,7 +608,7 @@ class MyStrategy:
         self.change_current_waypoint(me)
 
         # если юнит слишком далеко отошёл от точки базирования отряда - немедленно возвращаться
-        if self.max_range_from_team_exceeded(world, me):
+        if self.max_range_from_team_exceeded(world, me, me.type == TrooperType.FIELD_MEDIC):
             log_it('max range from team coord exceed')
 
             team_coords = [(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
