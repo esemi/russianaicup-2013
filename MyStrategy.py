@@ -29,6 +29,9 @@ CF_medic_heal_level = 0.7
 # множитель для минимума недостающих хитов здоровья юнита при решении использовать аптечку или нет
 CF_medkit_bonus_hits = 0.8
 
+# радиус обзора, в пределах которого юниты кидаются за бонусом
+CF_range_bonus_for_me = 3.0
+
 
 def log_it(msg, level='info'):
     getattr(logging, level)(msg)
@@ -271,8 +274,8 @@ class MyStrategy:
         if me.holding_field_ration:
             holding_types.append(BonusType.FIELD_RATION)
 
-        bonuses = filter(lambda b: not self.max_range_from_team_exceeded(world, b) and b.type not in holding_types,
-                         world.bonuses)
+        bonuses = filter(lambda b: not self.max_range_from_team_exceeded(world, b) and b.type not in holding_types and
+                                   me.get_distance_to_unit(b) <= CF_range_bonus_for_me, world.bonuses)
 
         if len(bonuses) > 0:
             return sorted(bonuses, key=lambda b: me.get_distance_to_unit(b))[0]
@@ -386,7 +389,7 @@ class MyStrategy:
                                                                                      t.stance, coord[0], coord[1],
                                                                                      TrooperStance.STANDING)])
 
-    def find_path_from_to(self, world, coord_from, coord_to):
+    def find_path_from_to(self, world, coord_from, coord_to, use_cache=True):
         """
         Ищем кратчайший путь из точки А в точку Б с обходом препятствий и других юнитов
         Если одна из точек непроходима или выходит за пределы поля - отдаём пустой список
@@ -404,7 +407,7 @@ class MyStrategy:
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
             return []
 
-        if self.current_path is not None:
+        if self.current_path is not None and use_cache:
             try:
                 start_index = self.current_path.index(coord_from)
                 end_index = self.current_path.index(coord_to)
@@ -691,8 +694,7 @@ class MyStrategy:
         nearest_bonus = self.find_bonus(me, world)
         if nearest_bonus is not None:
             log_it('going to bonus %s' % str(nearest_bonus.type))
-            # todo test not cached path finder
-            path = self.find_path_from_to(world, (me.x, me.y), (nearest_bonus.x, nearest_bonus.y))
+            path = self.find_path_from_to(world, (me.x, me.y), (nearest_bonus.x, nearest_bonus.y), False)
             log_it('path for going to bonus %s from %s is %s' % (str((nearest_bonus.x, nearest_bonus.y)),
                                                                  str((me.x, me.y)), str(path)), 'debug')
             if len(path) > 0:
