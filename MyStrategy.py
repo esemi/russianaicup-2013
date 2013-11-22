@@ -19,6 +19,7 @@ from model.BonusType import BonusType
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
 CF_range_from_team = 1.1
+CF_range_from_team_medic = 0.9
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
@@ -231,10 +232,11 @@ class MyStrategy:
 
         shoot_range = self.team_avg_shooting_range(world)
         ranges_to_team = [me.get_distance_to(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
+        coef = CF_range_from_team if me.type != TrooperType.FIELD_MEDIC else CF_range_from_team_medic
         if len(ranges_to_team) == 0:
             return False
         else:
-            return max(ranges_to_team) > shoot_range * CF_range_from_team
+            return max(ranges_to_team) > shoot_range * coef
 
     @staticmethod
     def need_to_wait_medic(me, world):
@@ -669,7 +671,7 @@ class MyStrategy:
                 position = self.select_position_for_medic(me, world)
                 log_it('find %s team-rear position' % str(position))
                 if position is not None:
-                    path = self.find_path_from_to(world, (me.x, me.y), position)
+                    path = self.find_path_from_to(world, (me.x, me.y), position, False)
                     log_it('path for going to team rear position %s from %s is %s' % (str(position), str((me.x, me.y)),
                                                                                       str(path)), 'debug')
                     if len(path) > 0:
