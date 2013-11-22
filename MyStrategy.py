@@ -720,6 +720,7 @@ class MyStrategy:
     def _attack_unit(self, world, me, move, game, enemy):
         log_it('attack enemy id %s (hits %s)' % (str(enemy.id), str(enemy.hitpoints)))
         lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
+        upper_stance = TrooperStance.KNEELING if me.stance == TrooperStance.PRONE else TrooperStance.STANDING
 
         if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
             log_it('attack unit')
@@ -731,6 +732,10 @@ class MyStrategy:
                 return self._lower_stance_or_shoot(move, me, enemy, game)
             else:
                 return self._shoot(move, me, enemy)
+        elif upper_stance != me.stance and world.is_visible(me.shooting_range, me.x, me.y, TrooperStance.STANDING,
+                                                            enemy.x, enemy.y, enemy.stance):
+            log_it('raise stance for attack')
+            return self._stand_up(move, me, game)
         else:
             log_it('move to unit')
             path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
