@@ -48,7 +48,7 @@ def filter_free_wave(map_, val=None):
     return filter(lambda x: x['passability'], waves)
 
 
-def find_cell_neighborhood(coord, map_):
+def find_cell_neighborhood(coord, map_, allow_diagonaly=False):
     out = []
 
     if coord[0] > 0:
@@ -72,6 +72,31 @@ def find_cell_neighborhood(coord, map_):
         out.append(map_[coord[0]][coord[1]+1])
     except IndexError:
         pass
+
+    if allow_diagonaly:
+        try:
+            out.append(map_[coord[0]+1][coord[1]+1])
+        except IndexError:
+            pass
+
+        if coord[0] > 0:
+            try:
+                out.append(map_[coord[0]-1][coord[1]+1])
+            except IndexError:
+                pass
+
+        if coord[1] > 0:
+            try:
+                out.append(map_[coord[0]+1][coord[1]-1])
+            except IndexError:
+                pass
+
+        if coord[0] > 0 and coord[1] > 0:
+            try:
+                out.append(map_[coord[0]-1][coord[1]-1])
+            except IndexError:
+                pass
+
 
     return filter(lambda x: x['passability'], out)
 
@@ -99,7 +124,7 @@ class MyStrategy:
         self.current_path = None
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
-            level=logging.DEBUG)
+            level=logging.INFO)
 
     def move(self, me, world, game, move):
         log_it('<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
@@ -190,12 +215,11 @@ class MyStrategy:
         if shared.current_dest_waypoint is None:
             shared.current_dest_waypoint = 0
 
-        if len(shared.way_points) > shared.current_dest_waypoint:
+        if len(shared.way_points) > shared.current_dest_waypoint + 1:
             distance_to_waypoint = me.get_distance_to(*shared.way_points[shared.current_dest_waypoint])
             if distance_to_waypoint < me.vision_range * CF_range_from_waypoint:
                 shared.current_dest_waypoint += 1
                 log_it("new dest waypoint is %s" % str(shared.current_dest_waypoint))
-
 
     def max_range_from_team_exceeded(self, world, me):
         """
@@ -258,30 +282,21 @@ class MyStrategy:
         выбираем из клеток ту, которая находится в зоне обстрела врагов меньше всего
 
         """
-        # todo переписать этот ночной код Оо
 
+        troopers = [t for t in world.troopers if t.teammate and t.id != me.id]
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE)) for y, v in enumerate(row)]
                            for x, row in enumerate(world.cells)]
 
-        troopers = [t for t in world.troopers if t.teammate and t.id != me.id]
-
-        for t in troopers:
-            map_passability[t.x][t.y]['passability'] = False
-
-        print map_passability
-        print troopers
-
         cells = []
         for t in troopers:
-            cells += find_cell_neighborhood((t.x, t.y), map_passability)
-        cells
+            cells += find_cell_neighborhood((t.x, t.y), map_passability, True)
+        sorted_coords = sorted([c['coord'] for c in cells], key=lambda e: self.cell_attack_rank(e, world))
 
-        sorted_cells = []
-        enemies = [t for t in world.troopers if not t.teammate]
-        for cells
-
-
-        return (me.x, me.y)
+        if len(sorted_coords) > 0:
+            return sorted_coords[0]
+        else:
+            log_it('not found cells for medic safe staying %s %s' % (str(cells), str(troopers)), 'error')
+            return None
 
     def select_enemy(self, me, world):
         """
@@ -310,6 +325,9 @@ class MyStrategy:
         #иначе берём врага, ближайшего к центру команды
         team_coord = self.team_avg_coord(world)
         nearest_enemies = sorted(enemies, key=lambda e: distance_from_to(team_coord, (e.x, e.y)))
+
+        # todo выбор тех, кто может стрелять в нас всегда приоритетнее, чем тех, которые не могут дострелить до команды
+
         return nearest_enemies[0]
 
     @staticmethod
@@ -318,6 +336,12 @@ class MyStrategy:
         summary_damage = turn_count * me.get_damage(me.stance)
 
         return me.action_points >= me.shoot_cost and summary_damage >= enemy.hitpoints
+
+    @staticmethod
+    def cell_attack_rank(coord, world):
+        return len([t for t in world.troopers if not t.teammate and world.is_visible(t.shooting_range, t.x, t.y,
+                                                                                     t.stance, coord[0], coord[1],
+                                                                                     TrooperStance.STANDING)])
 
     def find_path_from_to(self, world, coord_from, coord_to):
         """
@@ -557,19 +581,19 @@ class MyStrategy:
             log_it('medic was left alone and move as commander')
             self._action_commander(me, world, game, move)
         elif heal_enemy is None:
-            log_it('medic move')
-
+            log_it('medic mode on')
             team_enemies = filter(lambda x: x is not None, [self.select_enemy(t, world) for t in world.troopers
                                                             if t.teammate and t.id != me.id])
             if len(team_enemies) > 0:
                 log_it('medic going to team-rear position')
                 position = self.select_position_for_medic(me, world)
                 log_it('find %s team-rear position' % str(position))
-                path = self.find_path_from_to(world, (me.x, me.y), position)
-                log_it('path for going to team rear position %s from %s is %s' % (str(position), str((me.x, me.y)),
-                                                                                  str(path)), 'debug')
-                if len(path) > 0:
-                    self._stand_up_or_move(world, move, game, me, path[0])
+                if position is not None:
+                    path = self.find_path_from_to(world, (me.x, me.y), position)
+                    log_it('path for going to team rear position %s from %s is %s' % (str(position), str((me.x, me.y)),
+                                                                                      str(path)), 'debug')
+                    if len(path) > 0:
+                        self._stand_up_or_move(world, move, game, me, path[0])
             else:
                 self._going_to_waypoint(world, me, move, game)
         else:
