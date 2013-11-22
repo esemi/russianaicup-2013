@@ -18,7 +18,7 @@ from model.BonusType import BonusType
 
 
 # коэф. для вычисления максимальной дальности юнита от точки базирования команды
-CF_range_from_team = 1.2
+CF_range_from_team = 1.1
 
 # коэф. для вычисления максимальной дальности юнита от вейпоинта
 CF_range_from_waypoint = 0.5
@@ -401,10 +401,12 @@ class MyStrategy:
         log_it('find path call start (%s to %s)' % (str(coord_from), str(coord_to)))
 
         if coord_from[0] < 0 or coord_from[0] > world.width or coord_from[1] < 0 or coord_from[1] > world.height or \
-            coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height or \
-            coord_from == coord_to:
+            coord_to[0] < 0 or coord_to[0] > world.width or coord_to[1] < 0 or coord_to[1] > world.height:
 
             log_it('invalid point for find_path_from_to %s %s' % (str(coord_from), str(coord_to)), 'error')
+            return []
+
+        if coord_from == coord_to:
             return []
 
         if self.current_path is not None and use_cache:
@@ -720,6 +722,7 @@ class MyStrategy:
         lower_stance = TrooperStance.KNEELING if me.stance == TrooperStance.STANDING else TrooperStance.PRONE
 
         if world.is_visible(me.shooting_range, me.x, me.y, me.stance, enemy.x, enemy.y, enemy.stance):
+            log_it('attack unit')
             if self.could_and_need_use_ration(me, game):
                 return self._eat_ration(move, me, game)
             elif self.could_and_need_use_grenade(me, enemy, game, world):
@@ -729,11 +732,12 @@ class MyStrategy:
             else:
                 return self._shoot(move, me, enemy)
         else:
+            log_it('move to unit')
             path = self.find_path_from_to(world, (me.x, me.y), (enemy.x, enemy.y))
             log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
-                                                                 str(path)))
+                                                                 str(path)), 'debug')
             if len(path) > 0:
-                return self._stand_up_or_move(world, move, game, me, path[0])
+                return self._seat_down_or_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
