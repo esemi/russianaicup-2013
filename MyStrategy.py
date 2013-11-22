@@ -366,15 +366,18 @@ class MyStrategy:
                 start_index = self.current_path.index(coord_from)
                 end_index = self.current_path.index(coord_to)
             except ValueError:
-                log_it('cache path failed')
+                log_it('get path from cache failed')
             else:
-                log_it('cache path indexes %s %s' % (str(start_index), str(end_index)))
+                log_it('cached path found (%s %s)' % (str(start_index), str(end_index)))
                 if start_index < end_index:
-                    return self.current_path[start_index+1:end_index]
+                    path = self.current_path[start_index+1:end_index]
                 else:
-                    return self.current_path[end_index+1:start_index][::-1]
+                    path = self.current_path[end_index+1:start_index][::-1]
 
-
+                if len(path) == 0 or len([t for t in world.troopers if (t.x, t.y) == path[0]]) == 0:
+                    return path
+                else:
+                    log_it('pass cached path (it busy by units)')
 
         # карта проходимости юнитов
         map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE), wave_num=None)
