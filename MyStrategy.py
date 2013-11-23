@@ -125,8 +125,6 @@ class MyStrategy:
 
     def __init__(self):
         self.current_path = None
-        self._lower_stance = False
-
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
             level=logging.INFO)
@@ -588,16 +586,24 @@ class MyStrategy:
             move.y = enemy.y
 
     def _lower_stance_or_shoot(self, move, me, enemy, game):
-        if me.get_damage(me.stance) * int(floor(me.action_points / me.shoot_cost)) >= enemy.hitpoints:
+        shoots_count = int(floor(me.action_points / me.shoot_cost))
+        if me.get_damage(me.stance) * shoots_count >= enemy.hitpoints:
             self._shoot(move, me, enemy)
         else:
-            if me.stance != TrooperStance.PRONE:
+            if me.stance == TrooperStance.STANDING or (me.stance == TrooperStance.KNEELING and
+               shoots_count == int(floor((me.action_points - game.stance_change_cost) / me.shoot_cost))):
                 self._seat_down(move, me, game)
             else:
                 self._shoot(move, me, enemy)
 
     def _stand_up_or_move(self, world, move, game, me, coord):
         if me.stance != TrooperStance.STANDING:
+            self._stand_up(move, me, game)
+        else:
+            self._move_to(world, move, game, me, coord)
+
+    def _seat_or_stand_move(self, world, move, game, me, coord):
+        if me.stance == TrooperStance.PRONE:
             self._stand_up(move, me, game)
         else:
             self._move_to(world, move, game, me, coord)
@@ -761,8 +767,7 @@ class MyStrategy:
                 if world.is_visible(me.shooting_range, path[0][0], path[0][1], me.stance, enemy.x, enemy.y, enemy.stance):
                     return self._move_to(world, move, game, me, path[0])
                 else:
-                    return self._seat_move(world, move, game, me, path[0])
-
+                    return self._seat_or_stand_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
