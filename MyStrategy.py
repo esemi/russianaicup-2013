@@ -600,9 +600,12 @@ class MyStrategy:
         else:
             self._move_to(world, move, game, me, coord)
 
-    def _seat_down_or_move(self, world, move, game, me, coord):
-        if me.stance == TrooperStance.STANDING:
-            self._seat_down(move, me, game)
+    def _seat_move(self, world, move, game, me, coord):
+        if me.stance != TrooperStance.KNEELING:
+            if me.stance == TrooperStance.STANDING:
+                self._seat_down(move, me, game)
+            else:
+                self._stand_up(move, me, game)
         else:
             self._move_to(world, move, game, me, coord)
 
@@ -719,7 +722,7 @@ class MyStrategy:
         if len(path) > 0:
             if self.need_to_wait_medic(me, world):
                 log_it('wait a medic')
-                return self._seat_down_or_move(world, move, game, me, path[0])
+                return self._seat_move(world, move, game, me, path[0])
             else:
                 log_it('stend up and move')
                 return self._stand_up_or_move(world, move, game, me, path[0])
@@ -749,7 +752,7 @@ class MyStrategy:
             log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
                                                                  str(path)), 'debug')
             if len(path) > 0:
-                return self._seat_down_or_move(world, move, game, me, path[0])
+                return self._seat_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
