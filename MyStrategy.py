@@ -303,7 +303,7 @@ class MyStrategy:
         troopers_coord = [t for t in world.troopers if (t.x, t.y) == coord]
         return world.cells[coord[0]][coord[1]] == CellType.FREE and len(troopers_coord) == 0
 
-    def select_heal_enemy(self, me, world):
+    def select_heal_enemy(self, me, world, is_soldier=False):
         """
         Выбираем союзника для лечения: выбираем ближайшего с неполными хитами
 
@@ -322,6 +322,8 @@ class MyStrategy:
         if len(avaliable_for_heal) > 0:  # берём соседа с минимальным здоровьем
             log_it('find %d heal neighborhoods' % len(avaliable_for_heal))
             return sorted(avaliable_for_heal, key=lambda e: e.hitpoints)[0]
+        elif is_soldier:
+            return None
         else:
             return sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))[0]
 
@@ -637,10 +639,11 @@ class MyStrategy:
         """
 
         enemy = self.select_enemy(me, world)
+        heal_enemy = self.select_heal_enemy(me, world, True)
 
-        if self.could_and_need_use_medikit(me, me, game):
-            log_it('soldier use medikit')
-            return self._use_medikit(move, me, me, game)
+        if heal_enemy is not None and self.could_and_need_use_medikit(me, heal_enemy, game):
+            log_it('soldier use medikit to %s' % str((heal_enemy.x, heal_enemy.y)))
+            return self._use_medikit(move, me, heal_enemy, game)
         elif enemy is not None:
             return self._attack_unit(world, me, move, game, enemy)
         else:
