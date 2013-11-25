@@ -303,7 +303,7 @@ class MyStrategy:
         troopers_coord = [t for t in world.troopers if (t.x, t.y) == coord]
         return world.cells[coord[0]][coord[1]] == CellType.FREE and len(troopers_coord) == 0
 
-    def select_heal_enemy(self, me, world):
+    def select_heal_enemy(self, me, world, is_soldier=False):
         """
         Выбираем союзника для лечения: выбираем ближайшего с неполными хитами
 
@@ -322,6 +322,8 @@ class MyStrategy:
         if len(avaliable_for_heal) > 0:  # берём соседа с минимальным здоровьем
             log_it('find %d heal neighborhoods' % len(avaliable_for_heal))
             return sorted(avaliable_for_heal, key=lambda e: e.hitpoints)[0]
+        elif is_soldier:
+            return None
         else:
             return sorted(units_for_heal, key=lambda u: me.get_distance_to(u.x, u.y))[0]
 
@@ -584,10 +586,12 @@ class MyStrategy:
             move.y = enemy.y
 
     def _lower_stance_or_shoot(self, move, me, enemy, game):
-        if me.get_damage(me.stance) * int(floor(me.action_points / me.shoot_cost)) >= enemy.hitpoints:
+        shoots_count = int(floor(me.action_points / me.shoot_cost))
+        if me.get_damage(me.stance) * shoots_count >= enemy.hitpoints:
             self._shoot(move, me, enemy)
         else:
-            if me.stance != TrooperStance.PRONE:
+            if me.stance == TrooperStance.STANDING or (me.stance == TrooperStance.KNEELING and
+               shoots_count == int(floor((me.action_points - game.stance_change_cost) / me.shoot_cost))):
                 self._seat_down(move, me, game)
             else:
                 self._shoot(move, me, enemy)
@@ -598,9 +602,18 @@ class MyStrategy:
         else:
             self._move_to(world, move, game, me, coord)
 
-    def _seat_down_or_move(self, world, move, game, me, coord):
-        if me.stance == TrooperStance.STANDING:
-            self._seat_down(move, me, game)
+    def _seat_or_stand_move(self, world, move, game, me, coord):
+        if me.stance == TrooperStance.PRONE:
+            self._stand_up(move, me, game)
+        else:
+            self._move_to(world, move, game, me, coord)
+
+    def _seat_move(self, world, move, game, me, coord):
+        if me.stance != TrooperStance.KNEELING:
+            if me.stance == TrooperStance.STANDING:
+                self._seat_down(move, me, game)
+            else:
+                self._stand_up(move, me, game)
         else:
             self._move_to(world, move, game, me, coord)
 
@@ -637,10 +650,11 @@ class MyStrategy:
         """
 
         enemy = self.select_enemy(me, world)
+        heal_enemy = self.select_heal_enemy(me, world, True)
 
-        if self.could_and_need_use_medikit(me, me, game):
-            log_it('soldier use medikit')
-            return self._use_medikit(move, me, me, game)
+        if heal_enemy is not None and self.could_and_need_use_medikit(me, heal_enemy, game):
+            log_it('soldier use medikit to %s' % str((heal_enemy.x, heal_enemy.y)))
+            return self._use_medikit(move, me, heal_enemy, game)
         elif enemy is not None:
             return self._attack_unit(world, me, move, game, enemy)
         else:
@@ -658,12 +672,16 @@ class MyStrategy:
 
         heal_enemy = self.select_heal_enemy(me, world)
         team_size = len([t for t in world.troopers if t.teammate])
+        enemy = self.select_enemy(me, world)  # работает только потому, что дальность броска гранаты равна дальности оружия медика
 
         if world.move_index == 0:
             log_it('medic pass first turn')
         elif team_size == 1:
             log_it('medic was left alone and move as commander')
             return self._action_commander(me, world, game, move)
+        elif enemy is not None and self.could_and_need_use_grenade(me, enemy, game, world):
+            log_it('medic throw grenade')
+            return self._shoot_grenade(move, me, enemy, game)
         elif heal_enemy is None:
             log_it('medic mode on')
             team_enemies = filter(lambda x: x is not None, [self.select_enemy(t, world) for t in world.troopers
@@ -716,7 +734,7 @@ class MyStrategy:
         if len(path) > 0:
             if self.need_to_wait_medic(me, world):
                 log_it('wait a medic')
-                return self._seat_down_or_move(world, move, game, me, path[0])
+                return self._seat_move(world, move, game, me, path[0])
             else:
                 log_it('stend up and move')
                 return self._stand_up_or_move(world, move, game, me, path[0])
@@ -746,7 +764,10 @@ class MyStrategy:
             log_it('path for going to enemy %s from %s is %s' % (str((enemy.x, enemy.y)), str((me.x, me.y)),
                                                                  str(path)), 'debug')
             if len(path) > 0:
-                return self._seat_down_or_move(world, move, game, me, path[0])
+                if world.is_visible(me.shooting_range, path[0][0], path[0][1], me.stance, enemy.x, enemy.y, enemy.stance):
+                    return self._move_to(world, move, game, me, path[0])
+                else:
+                    return self._seat_or_stand_move(world, move, game, me, path[0])
 
 
 if __name__ == '__main__':
