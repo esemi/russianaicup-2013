@@ -333,10 +333,12 @@ class MyStrategy:
 
         avaliable_for_heal = filter(lambda x: self.heal_avaliable(me, x) and
                                     (x.hitpoints / x.maximal_hitpoints) < CF_medic_heal_level, units_for_heal)
+        avaliable_for_heal_sort = sorted(avaliable_for_heal, key=lambda e: e.hitpoints)
 
-        if len(avaliable_for_heal) > 0:  # берём соседа с минимальным здоровьем
-            log_it('find %d heal neighborhoods' % len(avaliable_for_heal))
-            return sorted(avaliable_for_heal, key=lambda e: e.hitpoints)[0]
+        if len(avaliable_for_heal_sort) > 0:  # берём соседа с
+            log_it('find %d heal neighborhoods' % len(avaliable_for_heal_sort))
+            tmp = sorted(avaliable_for_heal_sort, reverse=True, key=lambda e: self.cell_attack_rank((e.x, e.y), world))
+            return tmp[0]
         elif is_soldier:
             return None
         else:
