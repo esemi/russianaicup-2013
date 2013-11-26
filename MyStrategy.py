@@ -248,6 +248,21 @@ class MyStrategy:
         return me.action_points >= game.field_ration_eat_cost and me.holding_field_ration
 
     @staticmethod
+    def get_coord_for_escape_from_attack(me, world):
+        map_passability = [[dict(coord=(x, y), passability=(v == CellType.FREE)) for y, v in enumerate(row)]
+                           for x, row in enumerate(world.cells)]
+
+        escape_cells = [c['coord'] for c in find_cell_neighborhood((me.x, me.y), map_passability)]
+        filtered_cells = filter(lambda x: MyStrategy.cell_free_for_move(x, world), escape_cells)
+        sorted_coords = sorted(filtered_cells, key=lambda e: MyStrategy.cell_attack_rank(e, world))
+
+        if len(sorted_coords) > 0 and \
+           MyStrategy.cell_attack_rank(sorted_coords[0], world) < MyStrategy.cell_attack_rank((me.x, me.y), world):
+            return sorted_coords[0]
+        else:
+            return None
+
+    @staticmethod
     def could_and_need_use_grenade(me, enemy, game, world):
 
         # проверяем, не заденем ли мы союзных юнитов
@@ -673,6 +688,7 @@ class MyStrategy:
         heal_enemy = self.select_heal_enemy(me, world)
         team_size = len([t for t in world.troopers if t.teammate])
         enemy = self.select_enemy(me, world)  # работает только потому, что дальность броска гранаты равна дальности оружия медика
+        escape_from_attack_coord = self.get_coord_for_escape_from_attack(me, world)
 
         if world.move_index == 0:
             log_it('medic pass first turn')
@@ -701,7 +717,11 @@ class MyStrategy:
         else:
             log_it('medic heal enemy %s' % str(heal_enemy.hitpoints))
             if self.heal_avaliable(me, heal_enemy):
-                if self.could_and_need_use_ration(me, game):
+                if heal_enemy.id == me.id and escape_from_attack_coord is not None and \
+                   me.action_points >= game.standing_move_cost:
+                    log_it('escape from attack to %s' % str(escape_from_attack_coord))
+                    return self._stand_up_or_move(world, move, game, me, escape_from_attack_coord)
+                elif self.could_and_need_use_ration(me, game):
                     return self._eat_ration(move, me, game)
                 elif self.could_and_need_use_medikit(me, heal_enemy, game):
                     return self._use_medikit(move, me, heal_enemy, game)

@@ -33,7 +33,7 @@ if __name__ == '__main__':
     topRound = get_top(3, ROUND_FIRST_URL)
     logging.info('find %d top players by first round' % len(topRound))
 
-    topSandbox = get_top(5, SANDBOX_URL)
+    topSandbox = get_top(4, SANDBOX_URL)[:60]
     logging.info('find %d top players by sandbox' % len(topSandbox))
 
     top60 = []
@@ -42,6 +42,6 @@ if __name__ == '__main__':
             top60.append(p)
 
     if 'esemi' in top60:
-        logging.info('esemi found into TOP60')
+        logging.info('esemi found into TOP60 %d' % top60.index('esemi'))
     else:
         logging.info('esemi NOT found into TOP60')
