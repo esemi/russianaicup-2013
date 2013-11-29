@@ -33,6 +33,9 @@ CF_medkit_bonus_hits = 0.8
 # радиус обзора, в пределах которого юниты кидаются за бонусом
 CF_range_bonus_for_me = 3.0
 
+# максимальное количество фейлов, после которого кеш поиска пути принудительно сбрасывается
+PATH_cache_failed_limit = 6
+
 
 def log_it(msg, level='info'):
     getattr(logging, level)(msg)
@@ -125,6 +128,7 @@ class MyStrategy:
 
     def __init__(self):
         self.current_path = None
+        self.cache_failed_count = 0
         logging.basicConfig(
             format='%(asctime)s %(levelname)s:%(message)s',
             level=logging.INFO)
@@ -146,6 +150,14 @@ class MyStrategy:
     @current_path.setter
     def current_path(self, value):
         self._current_path = value
+
+    @property
+    def cache_failed_count(self):
+        return self._cache_failed_count
+
+    @cache_failed_count.setter
+    def cache_failed_count(self, value):
+        self._cache_failed_count = value
 
     @staticmethod
     def select_action_by_type(type_):
@@ -432,7 +444,7 @@ class MyStrategy:
         if coord_from == coord_to:
             return []
 
-        if self.current_path is not None and use_cache:
+        if self.current_path is not None and use_cache and self.cache_failed_count <= PATH_cache_failed_limit:
             try:
                 start_index = self.current_path.index(coord_from)
                 end_index = self.current_path.index(coord_to)
@@ -549,7 +561,9 @@ class MyStrategy:
         else:
             if not self.cell_free_for_move(coord, world):
                 log_it('cell not free')
+                self.cache_failed_count += 1
             else:
+                self.cache_failed_count = 0
                 move.action = ActionType.MOVE
                 move.x = coord[0]
                 move.y = coord[1]
@@ -644,7 +658,7 @@ class MyStrategy:
             team_coords = [(t.x, t.y) for t in world.troopers if t.teammate and t.id != me.id]
             coords_to = sorted(team_coords, key=lambda c: me.get_distance_to(*c))[0]
 
-            path = self.find_path_from_to(world, (me.x, me.y), coords_to)
+            path = self.find_path_from_to(world, (me.x, me.y), coords_to, False)
             log_it('path for return to team %s' % str(path), 'debug')
             if len(path) > 0:
                 if me.stance != TrooperStance.STANDING:
